@@ -1,0 +1,160 @@
+'''64비트-SMP 커널 만들기 - 인터럽트 사용하기'''
+
+----
+
+ * 작성자: 김기오 
+ 
+ * 문서 소개
+64비트-SMP 커널 만들기 강좌의 10장
+
+----
+
+ * 작성 일지
+
+2009.3.21 김기오: 작성 시작
+
+
+----
+
+[[TableOfContents]] 
+
+----
+
+= 인터럽트 사용하기 =
+
+
+== IRQ 번호와 VECTOR 번호 ==
+
+
+인텔 프로세서는 인터럽트 핸들러의 주소를 IDT (Interrupt Descriptor Table)이라는 배열로 관리한다. 이 테이블은 프로세서의 예외와 외부 장치의 인터럽트, 프로세서의 내부 인터럽트 등 모든 인터럽트를 관리하므로 IRQ 번호와 VECTOR 번호를 구분해서 사용하게 되었다.
+
+ * IRQ 번호: 장치의 인터럽트 번호, 예를 들어 키보드는 1번, 프로세서 내부 타이머는 10번으로 할당됨, 시스템에 따라 고정된 번호일 수도 있고 임의로 설정한 번호일 수도 있음
+ * VECTOR 번호: IDT 테이블 저장된 핸들러의 인덱스
+
+인텔 프로세서는 프로세서의 예외 등을 위해 0~0x1F 까지의 VECTOR 번호를 미리 예약해놓았다. 따라서 IRQ 번호가 0번이라면 할당될 수 있는 VECTOR 번호는 최소한 0x20 이상이 된다.
+
+현재 CaOS v.0.05에서는 키보드의 IRQ 번호를 1번으로 설정한다. 전통적인 8259A PIC를 사용하므로 키보드 등 몇가지 장치의 인터럽트 번호는 표준적으로 고정되어 있으므로 바꿀 수 없다. 그리고 프로세서 내부 타이머의 인터럽트 번호를 0x10으로 설정한다. 
+
+VECTOR 번호의 설정은 인터럽트 번호에 무조건 0x20을 더한 것으로 계산한다. 따라서 키보드의 인터럽트 핸들러는 IDT 테이블의 0x21번 엔트리에 저장되고, 프로세서 내부 타이머는 0x30번 엔트리에 저장된다.
+
+
+== BSP의 Local APIC 초기화 ==
+
+
+BSP의 Local APIC를 설정해서 BSP가 외부 장치의 인터럽트를 처리할 수 있도록한다. apic.c 파일의 init_bsp_apic 함수가 BSP의 초기화를 실행한다.
+
+Local APIC의 APIC ID가 곧 프로세서의 ID이다. 현재 이 함수를 호출하는 프로세서는 BSP이므로 당연히 ID 값이 0일 것이다.
+
+{{{
+143     // print BSP's Local APIC ID (which is equal to CPU ID)
+144     lapic_id = apic_read(APIC_ID);
+145     caos_printf("Init local apic ID=%d...", lapic_id);
+}}}
+
+
+그 다음 호출되는 verify_local_APIC 함수는 이 함수가 실행되는 프로세서의 Local APIC가 제대로 동작하는지를 확인하는 함수이다. Local APIC의 버전 레지스터는 읽기 전용 레지스터이다. 따라서 원래 버전과 다른 값을 써도 원래의 버전 값이 바뀌지 않아야 한다. 그리고 ID 레지스터는 쓰기 가능한 레지스터이므로 값이 써지는지 확인한다.
+
+다음은 Local APIC가 발생시킬 수 있는 모든 인터럽트를 막는다. 초기 상태가 어떤지 알수 없기 때문에 확실하게 사용하지 않는 인터럽트는 모두 마스킹한다.
+
+{{{
+217     // init all interrupts
+218     apic_write(APIC_LVTT, 0x10000);     // local timer
+219     apic_write(APIC_LVTTHMR, 0x10000);  // Thermal monitor
+220     apic_write(APIC_LVTPC, 0x10000);    // Performance monitor
+221     apic_write(APIC_LVT1, 0x10000);     // Local INT #1
+222     apic_write(APIC_LVT0, 0x10000);     // Local INT #0
+223     apic_write(APIC_LVTERR, 0x10000);   // Error
+}}}
+
+Local APIC의 모든 인터럽트는 각각의 설정 레지스터가 있다. 공통적으로 16번 비트가 인터럽트의 마스킹 비트이므로 모든 설정 레지스터의 16번 비트를 1로 써주면 인터럽트가 마스킹된다. Local APIC를 활성화하기 전에 미리 인터럽트를 마스킹해야 한다. 활성화된 이후에 마스킹되지 않은 인터럽트가 발생하면 처리할 수 없기 때문이다.
+
+Task Priority 레지스터는 프로세서가 실행하는 프로그램의 우선순위를 정하는 것이다. 만약 이 값보다 낮은 인터럽트가 발생한다면 Local APIC는 인터럽트 요청을 프로세서로 전송하지 않는다. BSP가 모든 인터럽트를 처리하도록 Task Priority 레지스터의 값을 0으로 설정한다.
+
+이제 로컬 인터럽트를 설정한다. IO APIC나 8259A 등에서 전달되는 인터럽트 요청 신호는 모두 Local APIC의 LINT0/1 핀으로 보내진다. 이 신호들을 어떻게 인식할 것인지를 설정한다. 
+
+{{{
+264     reg = apic_read(APIC_LVT0);
+265     reg &= ~APIC_LVT_MASKED;        // enable
+266     reg |= APIC_LVT_LEVEL_TRIGGER;  // level trigger mode
+267     reg |= APIC_INPUT_POLARITY;     // active low
+268     reg |= APIC_DM_EXTINT;          // delivery mode ExtINT
+269     reg |= LINT0_VECTOR;            // vector of LINT0
+270     apic_write(APIC_LVT0, reg);
+271
+272     reg = apic_read(APIC_LVT0);
+273     reg &= ~APIC_LVT_MASKED;        // enable
+274     reg |= APIC_LVT_LEVEL_TRIGGER;  // level trigger mode
+275     reg |= APIC_INPUT_POLARITY;     // active low
+276     reg |= APIC_DM_EXTINT;          // delivery mode ExtINT
+277     reg |= LINT1_VECTOR;            // vector of LINT0
+278     apic_write(APIC_LVT0, reg);
+265
+}}}
+
+인텔 메뉴얼에서는 Local APIC가 외부 장치의 인터럽트를 받을 경우에는 곧바로 프로세서로 전달하고, 그 외의 로컬 소스의 인터럽트는 LINT0/1로 처리한다고 한다. 
+
+'''아직까지는 로컬 인터럽트가 무엇인지 정확하게 파악하지 못했다. 하지만 LVT0을 활성화하지 않으면 qemu상에서 general protection 예외가 발생하므로 활성화시켜놓았다.'''
+
+모든 설정이 끝났으면 Spurious Interrupt Vector 레지스터의 8번 비트를 1로 셋팅해서 Local APIC를 활성화시킨다.
+
+
+== BSP의 Local timer 사용 ==
+
+
+Local APIC의 Initial Count Register에는 카운터가 시작될 값을 쓴다. 그리고 Divide configuration register에 프로세서 버스 클럭의 분주값을 쓰면, 원하는 주기에 따라 카운터 값이 감소된다. 카운터 값이 0이 되면 인터럽트가 발생할 것이다.
+
+타이머 인터럽는 LVT Timer Register로 설정한다. 17번 비트를 1로 셋팅하면 타이머 인터럽트가 반복해서 발생하고 카운터 값도 자동으로 갱신된다. [7:0] 비트에는 인터럽트의 벡터 번호를 저장한다. 
+
+{{{
+155     // Initial Count register
+156     apic_write(APIC_TMICT, 0xFFFFFF);
+157     // Divide Configuration register
+158     apic_write(APIC_TDCR, APIC_TDR_DIV_64);
+159
+160
+161     //
+162     // enable timer interrupt
+163     //
+164     lvt_timer = apic_read(APIC_LVTT);
+165     lvt_timer &= (~APIC_LVT_MASKED);        // unmask
+166     lvt_timer |= APIC_LVT_TIMER_PERIODIC;   // periodically repeat
+167     lvt_timer |= IRQ_TO_VECTOR(BSP_TIMER_IRQ);          // vector
+168     apic_write(APIC_LVTT, lvt_timer);
+}}}
+
+그리고 모든 설정이 끝났으면 register_irq 함수를 이용해서 인터럽트를 등록한다.
+
+{{{
+174     if ((apic_read(APIC_LVTT) & APIC_LVT_MASKED) == 0)  {
+175         caos_printf("..success\n");
+176         // timer irq : local APIC timer do not need PIC-enabling
+177         // only register handler.
+178         register_irq(BSP_TIMER_IRQ, bsp_local_timer);
+179     } else {
+180         caos_printf("..fail\n");
+181     }
+}}}
+
+
+== 키보드 인터럽트 사용 ==
+
+
+키보드 인터럽트는 8259A PIC를 통해서 전달된다. Local APIC는 외부 장치 인터럽트를 확인하면 별다른 처리없이 그대로 프로세서로 전달한다. 따라서 8259A PIC가 전달하는 0x21 벡터 번호를 프로세서는 그대로 사용해서 IDT 테이블의 0x21번 엔트리를 읽고 핸들러를 처리한다.
+
+키보드 인터럽트가 발생하면 실행되는 코드의 순서는 다음과 같다.
+
+ * irq_entry.asm의 _irq_1
+ * irq_handler.c의 handle_irq
+ * irq_handler[0x21] 호출
+ * keyboard_isr이 실행됨
+
+키보드 인터럽트에서 키 스캔을 읽는 코드는 널리 알려진 코드이므로 자세한 설명은 생략한다.
+
+
+== 참고 자료 ==
+
+ * Intel Multiprocessor Specification v1.4, May, 1997
+ * http://nerd.egloos.com/2954163
+
+
+

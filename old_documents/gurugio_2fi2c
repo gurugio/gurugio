@@ -1,0 +1,285 @@
+'''s3c2440보드의 ks24c080 EEPROM을 I2C 통신으로 제어하는 예제'''
+
+= testi2c.c =
+
+{{{#!vim c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <sys/poll.h>
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#include <linux/i2c.h>
+#include <linux/i2c-dev.h>
+
+
+
+#define DEV_NAME "/dev/i2c-0"
+#define KS24C080_ADDR 0x50
+#define KS24C080_ADDR_W 0x60
+#define KS24C080_ADDR_R 0x61
+
+
+/*
+ * 이유는 모르지만 16바이트 이상 데이터를 보내지 못한다.
+ */
+#define MAX_I2C_DATA    16
+
+
+#if 0
+/*
+ * I2C Message - used for pure i2c transaction, also from /dev interface
+ */
+struct i2c_msg {
+        __u16 addr;     /* slave address                        */
+        __u16 flags;
+#define I2C_M_TEN       0x10    /* we have a ten bit chip address       */
+#define I2C_M_RD        0x01
+#define I2C_M_NOSTART   0x4000
+#define I2C_M_REV_DIR_ADDR      0x2000
+#define I2C_M_IGNORE_NAK        0x1000
+#define I2C_M_NO_RD_ACK         0x0800
+        __u16 len;              /* msg length                           */
+        __u8 *buf;              /* pointer to msg data                  */
+};
+
+
+/* This is the structure as used in the I2C_RDWR ioctl call */
+struct i2c_rdwr_ioctl_data {
+        struct i2c_msg *msgs;   /* pointers to i2c_msgs */
+        __u32 nmsgs;                    /* number of i2c_msgs */
+};
+#endif
+
+
+
+/*
+ * Initialize i2c communication for ks24c080 chip
+ *
+ * fd: device file descriptor
+ */
+int init_ks24c080(int fd)
+{
+        /*
+         * set slave-address for i2c communication
+         * KS24C080's address is 0x50
+         */
+        if (ioctl(fd, I2C_SLAVE, KS24C080_ADDR) < 0) {
+                printf("Fail to set slave address to %x\n", KS24C080_ADDR);
+                return -2;
+        }
+
+        return 0;
+}
+
+/*
+ * Send data to ks24c080
+ *
+ * fd: device file descriptor
+ * data: data buffer to send
+ * size: data size
+ * offset: word address in memory
+ */
+int write_ks24c080(int fd, char *data, int size, int offset)
+{
+        int ret;
+        struct i2c_rdwr_ioctl_data i2c_data;
+        struct i2c_msg msg[1];
+        char *buf;
+
+
+        if (size > MAX_I2C_DATA)
+                size = MAX_I2C_DATA;
+
+        buf = malloc(size+1);
+
+        /*
+         * First data of buffer must be offset in the EEPROM,
+         * and writting data is following.
+         */
+        buf[0] = offset;
+        memcpy(&buf[1], data, size);
+
+        /*
+         * write operation
+         */
+        i2c_data.msgs = msg;
+        i2c_data.nmsgs = 1;             // use one message structure
+
+        i2c_data.msgs[0].addr = KS24C080_ADDR;
+        i2c_data.msgs[0].flags = 0;     // don't need flags
+        i2c_data.msgs[0].len = size+1;
+        i2c_data.msgs[0].buf = (__u8 *)buf;
+
+        /*
+         * ioctl() processes read & write.
+         * Operation is determined by flags field of i2c_msg
+         */
+        if((ret = ioctl(fd, I2C_RDWR, &i2c_data)) < 0) {
+                perror("write data fail\n");
+                return ret;
+        }
+
+        printf("[%s]\n", &buf[1]);
+        return size+1;
+
+
+}
+
+
+/*
+ * Receive data from ks24c080
+ *
+ * fd: device file descriptor
+ * data: data buffer to send
+ * size: data size
+ * offset: word address in memory
+ */
+
+int read_ks24c080(int fd, char *data, int size, int offset)
+{
+        int ret;
+        struct i2c_rdwr_ioctl_data i2c_data;
+        struct i2c_msg msg[2];
+        char tmp[2];
+
+        /*
+         * Two operation is necessary for read operation.
+         * First determine offset address
+         * , and then receive data.
+         */
+        i2c_data.msgs = msg;
+        i2c_data.nmsgs = 2;     // two i2c_msg
+
+        /*
+         * First, send the offset address to EEPROM
+         * Data is only offset address.
+         */
+        tmp[0] = offset;
+        i2c_data.msgs[0].addr = KS24C080_ADDR;
+        i2c_data.msgs[0].flags = 0;     // write
+        i2c_data.msgs[0].len = 1;       // only one byte
+        i2c_data.msgs[0].buf = (__u8 *)tmp;
+
+        /*
+         * Second, read data from the EEPROM
+         */
+        i2c_data.msgs[1].addr = KS24C080_ADDR;
+        i2c_data.msgs[1].flags = I2C_M_RD;      // read command
+        i2c_data.msgs[1].len = size;
+        i2c_data.msgs[1].buf = (__u8 *)data;
+
+        ret = ioctl(fd, I2C_RDWR, &i2c_data);
+
+        if (ret < 0) {
+                perror("read data fail\n");
+                return ret;
+        }
+
+        return size;
+
+}
+
+
+/*
+ * s3c6400보드에 붙어있는
+ *
+ */
+int main(int argc, char **argv)
+{
+
+        int fd;
+        int ret;
+
+        char *buf_rcv;
+        int i;
+
+        if (argc < 2) {
+                printf("USAGE: %s <text message> \n", argv[0]);
+                return 0;
+        }
+
+        fd = open(DEV_NAME, O_RDWR);
+        if (fd < 0) {
+                perror("fail open device\n");
+                return -1;
+        }
+
+
+        ret = init_ks24c080(fd);
+        if (ret < 0) {
+                perror("fail to open device\n");
+                return -1;
+        }
+
+        ret = write_ks24c080(fd, argv[1], strlen(argv[1]), 0);
+        if (ret <= 0) {
+                perror("fail to send data\n");
+                goto error_i2c;
+        }
+
+        buf_rcv = malloc(strlen(argv[1])+1);
+
+        ret = read_ks24c080(fd, buf_rcv, strlen(argv[1])+1, 0);
+        if (ret <= 0) {
+                perror("fail to send data\n");
+                goto error_i2c;
+        }
+
+        printf("RCV: ");
+        for (i = 0; i < ret-1; i++)
+                printf("%c", buf_rcv[i]);
+        printf("\n");
+
+        ret = 0;
+        printf("OK\n");
+
+error_i2c:
+        close(fd);
+
+
+        return 0;
+
+}
+
+
+}}}
+
+= Makefile =
+{{{
+
+CC = /usr/local/arm/4.2.2-eabi/usr/bin/arm-linux-gcc
+
+SOURCES = testi2c.c
+TARGET = testi2c
+
+all: $(TARGET)
+        cp -i $(TARGET) /nfsroot/fs/root
+
+$(TARGET): $(SOURCES)
+        $(CC) -W -Wall -o $@ $(SOURCES)
+
+clean:
+        rm -f $(TARGET)
+
+
+}}}
+= 실행 결과 =
+
+{{{
+[root@~]# ./testi2c asdf12345
+[asdf12345]
+RCV: asdf12345
+OK
+[root@~]# ./testi2c asdf12
+[asdf12]
+RCV: asdf12
+OK
+[root@~]#
+
+}}}

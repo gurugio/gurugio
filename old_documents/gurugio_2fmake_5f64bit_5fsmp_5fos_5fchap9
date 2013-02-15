@@ -1,0 +1,194 @@
+'''64비트-SMP 커널 만들기 - 9장 SMP초기화'''
+
+''SMP 관련 기능은 현재 구현중이므로 내용이 바뀔 수 있습니다.''
+
+----
+
+ * 작성자: 김기오 
+ 
+ * 문서 소개
+64비트-SMP 커널 만들기 강좌의 9장
+
+----
+
+ * 작성 일지
+
+2009.3.18 김기오: 작성 시작
+
+
+----
+
+[[TableOfContents]] 
+
+----
+
+= SMP 초기화 =
+
+
+PC에 전원이 입력된 후 바이오스가 하는 일 중에는 프로세서의 정보를 알아내는 일도 있다. 만약 멀티코어를 가진 프로세서가 있다면 바이오스는 각각의 코어에 대한 정보와 PCI 인터럽트 설정 등에 대한 정보를 확인해서 메모리에 저장하고, 운영체제는 이 정보를 읽어서 시스템에 멀티코어가 있는 것을 인식하고 처리해야 한다.
+
+바이오스는 2가지 MP floating pointer 테이블과 MP configuration table, 2가지 테이블을 만들어준다. MP floating pointer 테이블은 항상 정해진 영역에 저장되므로 MP floating pointer 테이블을 먼저 읽고, MP configuration table의 주소를 알아낸 후 MP configuration table을 읽어서 시스템에 장착된 프로세서의 갯수나 기타 시스템 하드웨어 환경에 대해서 알아낼 수 있다.
+
+smp 기능을 활성화하기 위해 가장 먼저 호출되는 함수는 mp_spec.c 파일의 smp_init 함수이다. 가장 먼저 smp_scan_config 함수를 호출해서 MP floating pointer 테이블로부터 MP configuration table의 주소를 알아낸다. 그리고 SMP 초기화에 필요한 전역 변수들을 초기화한 후, smp_read_mpc 파일을 호출해서 MP configuration table을 읽고 SMP 관련 하드웨어 상태를 확인한다.
+
+
+== MP floating pointer 테이블 읽기 ==
+
+
+PC의 규정상 MP floating pointer 테이블은 물리 메모리의 0x0~0x400이나 0x9FC00~0xA0000 혹은 0xF0000~0xFFFFF 안에 저장되어야 한다. 따라서 각각의 영역에 따라 smp_scan_config 함수를 호출한다. MP floating pointer 테이블은 다음과 같이 intel_mp_floating 구조체로 선언된다.
+
+{{{
+ 30 struct intel_mp_floating
+ 31 {
+ 32     char mpf_signature[4];      /* "_MP_"           */
+ 33     unsigned int mpf_physptr;   /* Configuration table address  */
+ 34     unsigned char mpf_length;   /* Our length (paragraphs)  */
+ 35     unsigned char mpf_specification;/* Specification version 0x1~0x4    */
+ 36     unsigned char mpf_checksum; /* Checksum (makes sum 0)   */
+ 37     unsigned char mpf_feature1; /* Standard or configuration ?  */
+ 38     unsigned char mpf_feature2; /* Bit7 set for IMCR|PIC    */
+ 39     unsigned char mpf_feature3; /* Unused (0)           */
+ 40     unsigned char mpf_feature4; /* Unused (0)           */
+ 41     unsigned char mpf_feature5; /* Unused (0)           */
+ 42 } __attribute__ ((packed));
+}}}
+
+물리 메모리의 0x0~0x400이나 0x9FC00~0xA0000 혹은 0xF0000~0xFFFFF 안에 _MP_라는 문자열을 찾는 것이 테이블을 검색하는 첫번째 방법이다. 그리고 mpf_length 필드는 테이블의 갯수를 말하므로 항상 1 값을 가지고, mpf_specification은 1과 4사이의 값을 가져야 한다. 현재 표준 MP 스펙은 1.1이나 1.4 버전을 따르므로 1이나 4 값을 가져야 한다. 따라서 이런 조건들을 가지고 메모리를 검색하면 MP floating pointer 테이블을 찾을 수 있다. mp_spec.c파일에 구현된 smp_scan_config함수가 MP floating pointer 데이터를 읽는 함수이다.
+
+smp_scan_config 함수는 다음과 같이 4바이트씩 건너뛰면서 _MP_ 문자열과 mpf_length 값을 찾는다. 테이블이 찾아지면 smp_found_config 플래그 변수의 값을 1로 셋팅하고 MP configuration table의 물리 주소를 mpf_found 변수에 저장하고 함수를 끝낸다.
+
+{{{
+ 79     while (length > 0) {
+ 80         mpf = (struct intel_mp_floating *)basep;
+ 81
+ 82         if ((*basep == SMP_MAGIC_IDENT) &&
+ 83                 (mpf->mpf_length == 1) && // this should be 1
+ 84                 ((mpf->mpf_specification == 1) || (mpf->mpf_specification ==     4))) {
+ 85             smp_found_config = 1;
+ 86
+ 87 #ifdef DEBUG
+ 88             caos_printf("Reserve SMP configuration table %x\n",
+ 89                     mpf->mpf_physptr);
+ 90 #endif
+ 91
+ 92             mpf_found = mpf;    // mpf_found is a global variable
+ 93
+ 94             return 1;
+ 95
+ 96         }
+ 97
+ 98         basep += 4;
+ 99         length -= 16;
+}}}
+
+
+== MP Configuration Table 읽기 ==
+
+
+MP floating pointer 테이블을 찾으면 그 다음은 MP configuration table을 찾아서 정보를 읽을 수 있다. MP configuration table은 다음과 같이 mp_config_table 구조체로 선언되어 있다.
+
+{{{
+ 44 struct mp_config_table
+ 45 {
+ 46     char mpc_signature[4];
+ 47 #define MPC_SIGNATURE "PCMP"
+ 48     unsigned short mpc_length;  /* Size of table */
+ 49     char  mpc_spec;         /* 0x01 ~ 0x04 */
+ 50     char  mpc_checksum;
+ 51     char  mpc_oem[8];
+ 52     char  mpc_productid[12];
+ 53     unsigned int mpc_oemptr;    /* 0 if not present */
+ 54     unsigned short mpc_oemsize; /* 0 if not present */
+ 55     unsigned short mpc_oemcount;
+ 56     unsigned int mpc_lapic; /* APIC address */
+ 57     unsigned int reserved;
+ 58 } __attribute__ ((packed));
+}}}
+
+smp_read_mpc 함수는 테이블의 주소를 인자로 받아서 테이블의 정보를 읽어내는 일을 한다. MP configuration table에는 다음과 같은 엔트리가 있다.
+
+* 프로세서 엔트리: 타입 코드 0, 20바이트 길이, 시스템에 존재하는 프로세서 코어 갯수만큼 엔트리가 존재함
+* 버스 엔트리: 타입 코드 1, 8바이트 길이, 시스템에 존재하는 버스의 갯수만큼 엔트리가 있음
+* IO APIC 엔트리: 타입 코드 2, 8바이트 길이, IO APIC의 갯수만큼 엔트리가 있음
+* IO Interrupt Assignment 엔트리: 타입 코드 3, 8바이트 길이, IO APIC에 연결된 인터럽트 소스의 갯수만큼 엔트리가 있음
+* Local Interrupt Assignment 엔트리: 타입 코드 4, 8바이트 길이, 시스템 인터럽트 소스의 갯수만큼 엔트리가 있음
+
+모든 엔트리들은 MP configuration table의 바로 뒤에 연속해서 저장되고, mpc_oemcount 필드에 저장된 값으로 총 몇개의 엔트리가 저장되어 있으므로 MP configuration table의 위치만 알면 각 엔트리의 위치도 알 수 있다.
+
+
+=== 프로세서 엔트리 ===
+
+
+프로세서 엔트리는 시스템에 몇개의 엔트리가 있고, 각각의 고유한 ID가 무엇인지 등을 알려준다. 각각의 프로세서 내부에 있는 Local APIC의 ID가 곧 프로세서 코어의 고유 ID가 된다.
+
+{{{
+ 68 struct mpc_config_processor
+ 69 {
+ 70     unsigned char mpc_type;     // A value of 0 identifies a processor entry
+ 71     unsigned char mpc_apicid;   /* Local APIC ID number */
+ 72     unsigned char mpc_apicver;  /* Local APIC's versions */
+ 73     unsigned char mpc_cpuflag;
+ 74 #define CPU_ENABLED     1   /* Processor is available */
+ 75 #define CPU_BOOTPROCESSOR   2   /* Processor is the BP */
+ 76     unsigned int mpc_cpufeature;
+ 77 #define CPU_STEPPING_MASK 0x0F
+ 78 #define CPU_MODEL_MASK  0xF0
+ 79 #define CPU_FAMILY_MASK 0xF00
+ 80     unsigned int mpc_featureflag;   /* CPUID feature value */
+ 81     unsigned int mpc_reserved[2];
+ 82 } __attribute__ ((packed));
+}}}
+
+프로세서 엔트리를 읽는 MP_processor_info 함수는 엔트리의 시작 주소를 인자로 받아서 프로세서 엔트리의 정보를 읽는다. 프로세서 엔트리를 읽을 때마다 num_processors 변수의 값을 증가시켜서 시스템에 몇개의 프로세서 코어가 있는지를 저장하고, cpu_present_map 이라는 비트맵의 비트를 셋팅한다. cpu_present_map 변수는 64비트 변수로 되어있어서 각 비트가 하나의 프로세서 코어를 표시한다. 만약 프로세서가 한개라면 cpu_present_map 변수의 값은 1이 될 것이고 두개라면 3이 될 것이다. 
+
+그 외에도 프로세서의 ID를 저장하는 bios_cpu_apicid 배열과 x86_cpu_to_apicid 배열이 있다. bios_cpu_apicid 배열은 프로세서 엔트리에 저장된 프로세서 ID의 값을 그대로 저장하는 것이고 SMP 관련 코드에서 사용된다. x86_cpu_to_apicid 배열은 프로세서 ID의 값이 저장되는 것은 동일하지만 APIC 관련 코드에서 사용된다는 차이가 있다.
+
+여러개의 프로세서 중에서 시스템이 부팅될 때 가장 먼저 깨어나서 부팅 과정을 실행하는 프로세서는 한개여야한다. 이 부팅 프로세서를 BSP(Bootstrap Processor)라고 부르고, 나머지 부팅 후에 깨어나서 동작하는 프로세서를 AP (Application Processor)라고 부른다. 현재 엔트리가 BSP에 대한 엔트리인지는 mpc_cpufeature 필드의 두번째 비트가 1인지를 확인하면 된다. BSP의 물리적인 프로세서 ID 값은 어떤 값인지 알 수 없지만, 커널 상에서는 항상 0번 cpu 번호를 할당한다. x86_cpu_to_apicid나 bios_cpu_apicid 뿐 아니라 cpu_present_map 비트맵에서도 항상 0번이 BSP를 표현하도록 해서 BSP와 AP 구분을 편리하게 한다.
+
+
+=== 버스 엔트리 ===
+
+
+버스 엔트리 정보를 읽는 함수는 MP_bus_into 이다. PC에 사용될 수 있는 버스 종류는 매우 많지만 현재는 PCI와 ISA 버스만을 처리한다. mp_bus_not_pci 라는 이름의 비트맵 변수에서 PCI 버스의 ID와 같은 자리의 비트를 0으로 셋팅한다. mp_bus_not_pci 비트맵은 ISA 버스를 찾을 때마다 1로 셋팅한다. mp_bus_id_to_pci_bus 배열은 PCI 버스의 물리적인 ID에 논리적인 ID를 매칭한다. 첫번째로 발견된 PCI 버스 엔트리의 버스 ID 값이 0xF라면 mp_bus_id_to_pci_bus[0xF] 의 값을 0으로 설정한다. 
+
+
+=== IO APIC 엔트리 ===
+
+
+시스템에 존재하는 IO APIC 들의 정보를 읽는다. 다른 엔트리와는 다르게 엔트리 자체를 통채로 복사해서 커널 정보에 저장한다. struct mpc_config_ioapic mp_ioapics라는 배열을 만들어서 IO APIC에 대한 정보를 저장한다. mpc_config_ioapic 구조체는 다음과 같이 정의된다.
+
+{{{
+111 struct mpc_config_ioapic
+112 {
+113     unsigned char mpc_type;     // must be 2
+114     unsigned char mpc_apicid;   // ID if this IO APIC
+115     unsigned char mpc_apicver;  // version
+116     unsigned char mpc_flags;    // usable flag
+117 #define MPC_APIC_USABLE     0x01
+118     unsigned int mpc_apicaddr;  // base address of this IO APIC
+119 } __attribute__ ((packed));
+}}}
+
+
+=== 인터럽트 엔트리 ===
+
+
+인터럽트 엔트리를 직접적으로 사용하지 않으므로 코드 설명은 생략한다. 현재까지 구현된 사항은 정보를 읽고  각 엔트리를 변수로 저장해놓는 것까지이다.
+
+
+IO Interrupt Assignment 엔트리는 IO APIC에 연결된 인터럽트 선들이 어떤 버스에 연결된 인터럽트이고 IO APIC의 몇번 인터럽트 입력 라인에 연결되었는지 등에 대한 정보들을 제공하는 엔트리이다.
+Local Interrpt Assignment 엔트리는 각 프로세서의 Local APIC에 연결된 인터럽트 선들의 정보가 담겨있다. 엔트리의 구조는 IO Interrupt Assignment 엔트리와 동일하다.
+
+
+== 참고 자료 ==
+
+ * http://www.faqs.org/docs/Linux-HOWTO/SMP-HOWTO.html
+ * http://www.osdever.net/cottontail/#SMP%20(IA32)  - 멀티프로세서 설명
+ * 리눅스 커널의 부팅 설명 - SMP 관련 챕터를 읽을 것 http://tldp.org/HOWTO/Linux-i386-Boot-Code-HOWTO/index.html
+ * Intel Multiprocessor Specification v1.4, May, 1997
+ * http://blog.swssm.org/179
+
+
+
+
+

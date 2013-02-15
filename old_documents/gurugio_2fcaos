@@ -1,0 +1,318 @@
+[wiki:gurugio 메인페이지]
+
+
+'''CaOS (Calcium Operating System) Project'''
+
+
+----
+
+'''[^http://kldp.net/projects/caos/ KLDP.net에 등록된 CaOS 홈페이지]'''
+
+'''[^http://wiki.osdev.org/Main_Page OSDEV 홈페이지]'''
+
+'''[wiki:gurugio/caos_worklog 날짜별 개발 기록 및 메모]'''
+
+----
+
+[[TableOfContents]]
+
+----
+
+= 기획 =
+
+
+ * CaOS 커널의 기본 철학은 무엇인가?
+  * RTOS : 동적 태스크 권한할당 등의 RTOS 구조를 구현
+  * SMP : 멀티프로세서 환경 지원
+  * Low Power : 저전력 구현을 위한 Load balancing, 프로세서 주파수 제어 등의 기법 구현
+  * uC/OS 등 기존의 RTOS의 바탕에 리눅스 커널의 SMP, Low power 기법 등을 접목한다.
+  * 운영체제 이론을 바탕으로 커널 디자인을 중시한다.
+   * 운영체제 이론 서적과 RTOS 서적의 내용을 정리하고 이론을 바탕으로 구현한다.
+
+
+ * 주요 이슈 문서화를 위한 표준 기본 문서 구성
+  * 관련 이론
+  * RTOS 구현 분석
+  * 리눅스 커널 구현 분석
+  * CaOS 구현 코드 분석/구현 예제
+
+
+ * Doxygen, LXR, KLDP.net+SVN 등의 개발 도구 도입
+  * http://www.ibm.com/developerworks/kr/library/au-learningdoxygen/
+  * 소스포지에 등록하는건 어떨까?
+  * nFORGE 서비스 이용?
+
+
+ * 부트로더 선택
+  *grub을 사용할 수 없을까? grub에서 32비트 전환 -> setup.asm 로드해서 64비트 전환, 이런 식으로?
+
+
+ * 파일시스템
+  * UXFS 와 같은 초소형 오픈소스 파일시스템을 사용한다.
+  * "simple file system" 구글 검색
+
+ * 커널 자체 디버깅 기능
+  * 커널 디버거를 어떻게 만들 수 있을까?
+  * 커널 실행 후 breakpoint에서 정지되고 step 단위 실행이 가능한가?
+  * uC/OS와 같이 어플리케이션으로 실행 가능한가?
+
+ * 커널 모듈의 객체화
+  * 구조체와 함수 포인터를 이용해서 메모리 관리/spinlock 등의 모듈을 객체화
+  * 초기화 함수 등록을 위한 범용 매크로 및 범용 자료구조 개발 (리눅스 커널의 리스트 자료 구조 참고)
+  * 객체의 초기화를 범용화해서 객체 분석을 쉽게 해야 함 (여러 함수 중 어떤 함수가 사용되었는지 확인이 어려울 수 있음)
+
+= 커널 디자인 =
+
+
+== Micro-Kernel 설계 ==
+
+
+ 1. 커널 디자인 관련 주요 논문 조사 (~1월), 읽기 (~2월)
+ 1. 자료가 많은 OS를 선택하여 분석 - '''MINIX3 로 결정!!''' (~6월)
+ 1. 따라서 만들기~~ (6~12월)
+
+
+'''Microkernel 이 적합한 이유'''
+ * 모듈별 구분이 잘 되어있어서 새로 다시 만들거나 수정할 때 각 모듈을 따로 고치면 되므로 틈날때마다 개발하기 좋다.
+ * 서버별로 여러 버전을 만들어서 시험하기 좋다.
+ * 결국 취미로 개발하기 위해서는 설계를 대강 해놓고 틈틈히 고치거나 자꾸 다시 만들어야 하는데 모듈화가 잘된 마이크로커널 방식이 좋다.
+
+'''적합하지 않은 이유'''
+ * 아직까지 좋은 자료를 잘 못찾겠다.
+ * 구현이 더 어렵지 않을까? 복잡한 IPC가 필요하고 모듈화를 위해 더 복잡한 설계가 필요할까?
+ * 어디 물어볼데가 없다.
+
+
+== 모듈별 디자인 ==
+
+
+ * 프로세스
+
+
+
+ * 메모리
+
+
+
+
+ * 파일시스템
+
+
+
+
+
+== 개발 로드맵 ==
+
+
+ 1. 개발 환경
+
+ 1. 부트로더 & 롱모드 변환, C 함수 시작
+
+ 1. printf, 비디오 메모리 접근
+
+ 1. 메모리 관리 초기화 - 페이징 설정
+
+ 1. 동적 메모리 할당
+
+ 1. GDT/IDT
+
+ 1. 멀티 프로세서 초기화 (APIC...)
+
+
+''2008.12.26 CaOS-64 v0.1 release''
+
+
+ 1. 커널 동기화 메소드 작성 및 커널을 재진입가능하게 수정
+
+ 1. IRQ 처리 (타이머,키보드 등 기본 장치의 인터럽트 처리) - 리눅스 커널의 irq_desc 테이블 구현 (IO APIC 처리 구현??)
+
+ 1. 디바이스 드라이버 관리
+
+ 1. 프로세스 관리 - 프로세스 관리 데이터 구조, 유저 모드 분리, 컨텍스트 스위칭
+
+ 1. 전력 관리
+
+ 1. 메모리 관리 - Demand page/page-fault 처리 구현
+
+
+= CaOS 소스 해석 문서 =
+
+
+ * [^wiki:gurugio/make_64bit_smp_os 코드 해설 문서]
+
+
+= 참고 자료 =
+
+
+== 외부 자료 ==
+
+
+ * [^http://asmlove.co.kr/wiki/wiki.php/gurugio/caos_references 참고 자료 모음]
+
+
+== 작성 자료 ==
+
+
+ * '''CaOS v0.05 의 개발 문서는 압축 파일에 포함되어 있음'''
+
+
+ * [wiki:gurugio/64bit_mode 64bit Long mode (IA-32e) 모드 개요 (32비트 보호 모드와 차이점을 중심으로)]
+
+
+ * [wiki:usermode_contextswitching CaOS-32 유저 모드 태스크의 컨텍스트 스위칭 (i386 플랫폼)]
+
+
+ * [wiki:gurugio/longmode_bootsect 64bit 롱모드로 진입하는 부트로더 예제 코드와 간단한 설명]
+
+
+ * [wiki:gurugio/caos_resource CaOS-64 메모리/IO 포트 영역을 struct resource로 관리하는 방법]
+
+
+= 개발 기록 =
+
+
+ * [wiki:gurugio/caos_worklog 날짜별 개발 기록 및 메모]
+
+
+
+= 소스 관리 =
+
+
+== release ==
+
+
+=== CaOS-32 v0.05 release ===
+
+
+ * '''V0.05 코드와 주요 코드의 해설 문서''' attachment:gurugio/caos/CaOS_v0_05_docu.zip 
+  * CaOS 빌드 방법과 개발 환경 설정 문서
+  * 32비트 보호 모드 부팅
+  * 세그멘테이션/4K 페이징 구현
+  * 32MB까지의 물리 메모리 지원
+  * 3개 유저모드 프로세스의 컨텍스트 스위칭 구현
+  * 디버깅을 위한 printf 구현
+  * '''CaOS-32 for IA-32 는 여기에서 중단하고 CaOS-64 for x86_64를 시작합니다.'''
+
+attachment:gurugio/caos/caos_32bit_v0.05.jpg
+
+
+=== CaOS-64 v0.1 release ===
+
+
+CaOS-64 의 0.1 버전을 릴리즈합니다. CaOS-64는 2008년 10월 초에 2007년에 작성한 CaOS-32를 64비트로 업그레이드하기 위해 시작되었습니다. 개발 도중에 64비트 뿐 아니라 x86_64의 SMP 기능을 커널에서 구현해보기 위한 시도를 하느라 3달의 기간이 소요되었습니다. 비록 SMP 기능을 완성하지는 못했지만 두번째 프로세서를 부팅시키고, C로 작성된 커널 코드로 점프하는데 성공하였습니다.
+
+2008년을 마무리하는 기념으로 이정도에서 v0.1 버전으로 Code freezing을 기념합니다. '''그래도 나름 크리스마스 릴리즈이네요~~'''
+
+ * 2008.12.25  CaOS-64 v1.0 릴리즈 attachment:gurugio/caos/caos64_v0.1_rel.7z
+  * 실행방법
+   * qemu에서만 실행되고, VMware 6.5에서는 실행이 안됨
+   * 윈도우에서 : qemu-20080810-windows\run.bat 를 실행하면 qemu에서 src64\floppy.img을 읽어서 실행함
+   * 리눅스에서 : src64 디렉토리에 들어가서 make dist 실행한 후 floppy.img가 생성되었는지 확인함. 자신이 사용하는 qemu나 boch 등에 사용
+  * BSP와 AP 모두 64비트 Long-mode로 동작함
+  * AP가 C로 작성된 커널 코드의 진입부까지 실행 (start_kernel 함수)
+  * AP는 화면 첫줄의 맨 오른쪽에 실행 메시지 출력함
+  * BSP의 Local APIC에서 타이머 인터럽트가 발생하여 화면 첫줄의 맨 왼쪽에 실행 메시지 출력함
+  * 키보드 인터럽트를 8259A PIC를 통해 발생시켜서 화면에 입력키를 출력함
+  * 동적 메모리 할당 구현 (alloc_pages, free_pages, kmalloc, kfree)
+  * 512MB 메모리, 2 CPU 지원
+
+ * 실행화면
+
+attachment:gurugio/caos/caos64_20081225_v0.1_snapshot.jpg
+
+
+== snapshot ==
+
+
+ * 2008.11.20 C code & printf attachment:gurugio/caos/src64_20081121.zip
+  * C 코드 작성 시작
+  * printf 함수 구현
+  * 가상 메모리 0xFFFF 8000 0000 0000 에 커널 맵핑
+
+
+ * 2008.12.09 바이트 단위 메모리 할당 구현 완료  attachment:gurugio/caos/src64_20081209_kmalloc.zip
+  * alloc_pages, free_pages 구현
+  * kmalloc, kfree 구현 - 슬랩 알고리즘 사용
+
+
+ * 2008.12.18 또 하나의 프로세서를 깨워서 리얼모드로 동작시킴  attachment:gurugio/caos/src64_20081218.7z
+  * 첫번째 글자가 0번 프로세서, 5번째 글자가 1번 프로세서의 동작임
+
+attachment:gurugio/caos/caos64_20081218.JPG
+
+
+ * 2008.3.15 Snapshot attachment:src_20080315.zip 
+  * 유저모드 프로세스 동작 기능 수정중
+
+ * 2008.11.10 Longmode Snapshot attachment:gurugio/caos/longmode_1110.zip
+  * 롱모드 진입 기능 작성 - 부팅 부분 작성함
+
+ * 2008.11.20 C code & printf attachment:gurugio/caos/src64_20081121.zip
+  * C 코드 작성 시작
+  * printf 함수 구현
+  * 가상 메모리 0xFFFF 8000 0000 0000 에 커널 맵핑
+
+ * 2008.12.02 메모리 관리 초기화, GDT 설정 완료  attachment:gurugio/caos/src64_20081202.zip
+  * IDT 설정을 위한 64비트 어셈블리 함수 작성 중
+  * 64비트 어셈블리 함수를 만들기 위해서는 NASM에서 DEFAULT REL 선언을 해주어야 64비트 RIP-relative 주소 지정을 할 수 있음
+
+ * 2008.12.03 IDT 초기화 완료, 인터럽트 테스트 완료  attachment:gurugio/caos/src64_20081203.zip
+  * 더미 인터럽트 핸들러를 IDT에 설정함 -> 추후 IRQ 처리와 함께 인터럽트 핸들러 작성
+
+ * 2008.12.03 페이징 할당 구현 중   attachment:gurugio/caos/src64_20081203_1.zip
+  * 페이지 디스크립터의 리스트를 이용한 페이지 할당 기능 구현
+  * 화면 출력 함수 중 scroll_screen 버그 수정
+
+attachment:gurugio/caos/src64_20081203.JPG
+
+
+ * 2008.12.04 페이지 단위 할당 구현 완료  attachment:gurugio/caos/src64_20081204_page_alloc.zip
+
+  * alloc_pages, free_pages 구현함
+
+ * 2008.12.08 프로세서 예외 처리 핸들러 작성  attachment:gurugio/caos/src64_20081208_exceptions.zip
+  * 각 예외마다 예외 이름과 발생 RIP 주소 출력함
+
+attachment:gurugio/caos/caos64_20081208.JPG
+
+ * 2008.12.16 MP configuration structure 읽기 작성 : attachment:gurugio/caos/src64_20081216_MP_configure.7z
+  * 리눅스 커널에 있는 코드를 그대로 사용함
+  * 멀티프로세서 부팅을 위해 BIOS가 하드웨어 설정을 메모리에 써주고 그것을 읽어서 프로세서 갯수나 APIC 등에 대한 하드웨어 스펙을 확인하게 됨
+
+ * 2009.2.14 문서화/코드 주석 작업: attachment:gurugio/caos/src64_20090214.7z
+
+ * 2009.2.22 캐시 사용에 대한 코드 추가: attachment:gurugio/caos/src64_20090222.7z
+  * x86_64는 디폴트로 캐시가 활성화되어 있음
+  * 코드에서 캐시에 대한 설정 비트를 수정하지 않았지만 캐시를 설정하는 코드를 추가해서 캐시 사용을 명확하게 지정함
+  * page.c-paging_init()에서 CR3 레지스터 값 설정시 캐시 관련 비트 설정
+  * page.c-paging_init()에서 CR3 레지스터 값 설정 직후 캐시 플러시
+  * setup.asm 에서 페이지 단위 캐시 사용 안함 -> 커널에서 확성화함
+
+ * 2009.3.30 코드 정리 및 빌드 환경 정리: attachment:gurugio/caos/caos64_v0.1_2009-03-28.tgz
+  * 크로스 컴파일을 위한 빌드 환경 정리, 상위 디렉토리에 Makfile과 빌드 설명 문서 작성
+  * 강좌를 쓰면서 발견된 버그 수정 및 코드 정리
+  * caos64 디렉토리에서 
+   * make dist 압축 파일 만들기
+   * make 빌드 후 image 디렉토리에 플로피 이미지 및 시스템 맵 파일 저장
+   * make bochs 1.44MB크기의 플로피 이미지 만들기 (Bochs 에서 사용 가능)
+
+ * 2009.4.4 코드 설명 문서 완료 후 v0.05의 코드 정리 최종 버전: attachment:gurugio/caos/caos64_v0.1_2009-04-04.tgz
+  * CaOS64 v0.1 코드의 설명 문서 chap 1~11 완료
+  * 각 함수마다 주석 및 인자 설명 기록
+  * 그 외 다양한 버그 수정 및 코드 문서화 작업
+
+ * 2009.5.9 attachment:gurugio/caos/caos64_v0.1_2009-05-09.tgz
+
+ * 2009.5.12 코드 설명 문서 완료 후 v0.05의 코드 정리 최종 버전: attachment:gurugio/caos/caos64_v0.1_2009-05-12.tgz
+  * 프로세스 관리 기능 개발 시작
+
+ * 2009.8.11 autotools 적용 시작 attachment:gurugio/caos/caos64_090811.tgz
+  * 5/12 버전은 프로세스 관리 기능을 작성하는 도중 문제가 생김
+  * 5/9 버전 코드에 autoctools 적용 : [:gurugio/caos_configure configure 작성 방법 문서]
+
+
+
+----
+
+
+since 2004.3.2

@@ -1,0 +1,1069 @@
+리눅스 커널에서 장치 인터럽트를 처리하는 주요 함수 분석
+
+[[TableOfContents]] 
+
+= struct irq_desc irq_desc[] - 인터럽트 디스크립터 테이블 =
+
+각각의 IRQ는 struct irq_desc라는 구조체의 배열로 관리된다.
+IRQ의 벡터 번호가 배열의 인덱스가 된다. 
+
+{{{
+128 /**
+129  * struct irq_desc - interrupt descriptor
+130  *
+
+irq_desc[] 배열을 초기화할 때 handle_bad_irq() 함수 포인터로 설정한다.
+그리고 핸들러가 없는 미확인된 인터럽트가 발생했을 때에 대한 처리를 담당한다.
+generic_handle_irq() 함수에서는 handle_irq 필드의 값이 NULL 이 아니면 
+발생한 인터럽트가 미확인된 인터럽트로 인식하고 __do_IRQ() 함수를 실행하지 않는다.
+인터럽트 핸들러를 등록할 때 이 포인터를 NULL 값으로 설정해서 __do_IRQ 함수가 실행되고
+인터럽트 핸들러가 실행될 수 있도록 한다.
+
+131  * @handle_irq:     highlevel irq-events handler [if NULL, __do_IRQ()]
+
+
+PIC 하드웨어 컨트롤러의 디스크립터이다.
+특정 인터럽트의 핸들러가 호출되기 전에 처리해야될 것들이나
+핸들러가 끝난 후 처리되어야 할 것들, 특정 인터럽트를 마스킹하거나 활성화하는 등등의
+PIC가 해야할 일에 대한 함수들의 포인터이다.
+플랫폼이 다르더라도 동일한 인터페이스를 제공할 수 있도록 이런 설계를 하였다.
+
+132  * @chip:       low level interrupt hardware access
+
+뭥미?
+133  * @msi_desc:       MSI descriptor
+134  * @handler_data:   per-IRQ data for the irq_chip methods
+
+
+PIC 동작에 필요한 데이터
+
+135  * @chip_data:      platform-specific per-chip private data for the chip
+136  *          methods, to allow shared chip implementations
+
+IRQ 핸들러, struct irqaction 구조체 안에 핸들러의 함수 포인터와 핸들러들의 리스트가 선언되어 있다.
+137  * @action:     the irq action chain
+
+현재 인터럽트의 상태, 처리 중, 펜딩 등등
+138  * @status:     status information
+
+해당 인터럽트가 몇번이나 마스킹되었는지를 나타내는 카운터.
+이 값이 0이면 인터럽트가 활성화된 상태. 양수이면 금지된 상태임.
+
+139  * @depth:      disable-depth, for nested irq_disable() calls
+
+전력 관리 모듈에서 사용하는 카운터.
+
+140  * @wake_depth:     enable depth, for multiple set_irq_wake() callers
+141  * @irq_count:      stats field to detect stalled irqs
+142  * @irqs_unhandled: stats field for spurious unhandled interrupts
+143  * @lock:       locking for SMP
+144  * @affinity:       IRQ affinity on SMP
+145  * @cpu:        cpu index useful for balancing
+146  * @pending_mask:   pending rebalanced interrupts
+147  * @dir:        /proc/irq/ procfs entry
+148  * @affinity_entry: /proc/irq/smp_affinity procfs entry on SMP
+149  * @name:       flow handler name for /proc/interrupts output
+150  */
+151 struct irq_desc {
+152     irq_flow_handler_t  handle_irq;
+153     struct irq_chip     *chip;
+154     struct msi_desc     *msi_desc;
+155     void            *handler_data;
+156     void            *chip_data;
+157     struct irqaction    *action;    /* IRQ action list */
+158     unsigned int        status;     /* IRQ status */
+159
+160     unsigned int        depth;      /* nested irq disables */
+161     unsigned int        wake_depth; /* nested wake enables */
+162     unsigned int        irq_count;  /* For detecting broken IRQs */
+163     unsigned int        irqs_unhandled;
+164     spinlock_t      lock;
+165 #ifdef CONFIG_SMP
+166     cpumask_t       affinity;
+167     unsigned int        cpu;
+168 #endif
+169 #if defined(CONFIG_GENERIC_PENDING_IRQ) || defined(CONFIG_IRQBALANCE)
+170     cpumask_t       pending_mask;
+171 #endif
+172 #ifdef CONFIG_PROC_FS
+173     struct proc_dir_entry   *dir;
+174 #endif
+175     const char      *name;
+176 } ____cacheline_internodealigned_in_smp;
+177
+178 extern struct irq_desc irq_desc[NR_IRQS];
+}}}
+
+
+
+
+irq_desc 테이블의 초기값은 kernel/irq/handle.c 파일에 다음과 같이 정의되어 있다.
+따로 request_irq 등으로 설정한 인터럽트가 아니면 이 초기값을 그대로 가진다.
+초기값은 handle_irq의 포인터를 가지므로 __do_IRQ() 함수가 호출되지 않고 handle_bad_irq() 함수가 호출되면서 인터럽트 처리는 끝난다.
+
+{{{
+ 36 /*
+ 37  * Linux has a controller-independent interrupt architecture.
+ 38  * Every controller has a 'controller-template', that is used
+ 39  * by the main code to do the right thing. Each driver-visible
+ 40  * interrupt source is transparently wired to the appropriate
+ 41  * controller. Thus drivers need not be aware of the
+ 42  * interrupt-controller.
+ 43  *
+ 44  * The code is designed to be easily extended with new/different
+ 45  * interrupt controllers, without having to do assembly magic or
+ 46  * having to touch the generic code.
+ 47  *
+ 48  * Controller mappings for all interrupt sources:
+ 49  */
+ 50 struct irq_desc irq_desc[NR_IRQS] __cacheline_aligned_in_smp = {
+ 51     [0 ... NR_IRQS-1] = {
+ 52         .status = IRQ_DISABLED,
+ 53         .chip = &no_irq_chip,
+ 54         .handle_irq = handle_bad_irq,
+ 55         .depth = 1,
+ 56         .lock = __SPIN_LOCK_UNLOCKED(irq_desc->lock),
+ 57 #ifdef CONFIG_SMP
+ 58         .affinity = CPU_MASK_ALL
+ 59 #endif
+ 60     }
+ 61 };
+}}}
+
+
+다음은 PIC 에 대한 디스크립터 struct irq_chip의 선언이다.
+
+많은 함수들이 있지만 그중에서 주로 사용하는 함수는 몇개 안된다.
+예를 들어 __do_IRQ() 함수에서는 ack ->  인터럽트 핸들러 -> end 순서로 호출한다.
+
+
+{{{
+ 76 /**
+ 77  * struct irq_chip - hardware interrupt chip descriptor
+ 78  *
+ 79  * @name:       name for /proc/interrupts
+
+PIC를 초기화하고 인터럽트를 받도록 하는 함수
+
+ 80  * @startup:        start up the interrupt (defaults to ->enable if NULL)
+
+PIC를 멈추는 함수
+
+ 81  * @shutdown:       shut down the interrupt (defaults to ->disable if NULL)
+
+각각의 인터럽트를 활성화시키거나 금지 시키는 함수. 대부분 mask/unmask와 같은 함수를 가리킨다.
+
+ 82  * @enable:     enable the interrupt (defaults to chip->unmask if NULL)
+ 83  * @disable:        disable the interrupt (defaults to chip->mask if NULL)
+
+
+ 84  * @ack:        start of a new interrupt
+ 85  * @mask:       mask an interrupt source
+ 86  * @mask_ack:       ack and mask an interrupt source
+ 87  * @unmask:     unmask an interrupt source
+
+
+인터럽트가 처리되었음을 알려주는 EOI(end-of-interrupt) 신호를 보냄.
+ 88  * @eoi:        end of interrupt - chip level
+
+
+인터럽트 핸들러가 종료된 후 마지막으로 호출되는 함수. __do_IRQ() 함수의 마지막에서 호출된다.
+예를 들어 인터럽트가 금지된 상태에서 처리되야하는 인터럽트 핸들러의 경우
+인터럽트를 활성화시키는 일을 한다.
+
+ 89  * @end:        end of interrupt - flow level
+ 90  * @set_affinity:   set the CPU affinity on SMP machines
+ 91  * @retrigger:      resend an IRQ to the CPU
+ 92  * @set_type:       set the flow type (IRQ_TYPE_LEVEL/etc.) of an IRQ
+ 93  * @set_wake:       enable/disable power-management wake-on of an IRQ
+ 94  *
+ 95  * @release:        release function solely used by UML
+ 96  * @typename:       obsoleted by name, kept as migration helper
+ 97  */
+ 98 struct irq_chip {
+ 99     const char  *name;
+100     unsigned int    (*startup)(unsigned int irq);
+101     void        (*shutdown)(unsigned int irq);
+102     void        (*enable)(unsigned int irq);
+103     void        (*disable)(unsigned int irq);
+104
+105     void        (*ack)(unsigned int irq);
+106     void        (*mask)(unsigned int irq);
+107     void        (*mask_ack)(unsigned int irq);
+108     void        (*unmask)(unsigned int irq);
+109     void        (*eoi)(unsigned int irq);
+110
+111     void        (*end)(unsigned int irq);
+112     void        (*set_affinity)(unsigned int irq, cpumask_t dest);
+113     int     (*retrigger)(unsigned int irq);
+114     int     (*set_type)(unsigned int irq, unsigned int flow_type);
+115     int     (*set_wake)(unsigned int irq, unsigned int on);
+116
+117     /* Currently used only by UML, might disappear one day.*/
+118 #ifdef CONFIG_IRQ_RELEASE_METHOD
+119     void        (*release)(unsigned int irq, void *dev_id);
+120 #endif
+121     /*
+122      * For compatibility, ->typename is copied into ->name.
+123      * Will disappear.
+124      */
+125     const char  *typename;
+126 };
+}}}
+
+
+다음은 x86 플랫폼에서 사용되는 i8259A PIC와 IO APIC의 디스크립터 정의이다.
+인터럽트 핸들러를 실행하기 전과 후에 PIC 디스크립터를 참조하여 PIC에 대한 처리를 해주어야 PIC가 계속 동작할 수 있다.
+
+{{{
+
+arch/x86_64/kernel/i8259.c
+102 static struct irq_chip i8259A_chip = {
+103     .name       = "XT-PIC",
+104     .mask       = disable_8259A_irq,
+105     .disable    = disable_8259A_irq,
+106     .unmask     = enable_8259A_irq,
+107     .mask_ack   = mask_and_ack_8259A,
+108 };
+
+arch/x86_64/kernel/io_apic.c
+1426 static struct irq_chip ioapic_chip __read_mostly = {
+1427     .name       = "IO-APIC",
+1428     .startup    = startup_ioapic_irq,
+1429     .mask       = mask_IO_APIC_irq,
+1430     .unmask     = unmask_IO_APIC_irq,
+1431     .ack        = ack_apic_edge,
+1432     .eoi        = ack_apic_level,
+1433 #ifdef CONFIG_SMP
+1434     .set_affinity   = set_ioapic_affinity_irq,
+1435 #endif
+1436     .retrigger  = ioapic_retrigger_irq,
+1437 };
+}}}
+
+
+
+
+{{{
+ 21 /**
+ 22  * handle_bad_irq - handle spurious and unhandled irqs
+ 23  * @irq:       the interrupt number
+ 24  * @desc:      description of the interrupt
+ 25  *
+ 26  * Handles spurious and unhandled IRQ's. It also prints a debugmessage.
+ 27  */
+ 28 void fastcall
+ 29 handle_bad_irq(unsigned int irq, struct irq_desc *desc)
+ 30 {
+
+잘못 발생된 인터럽트의 번호와 기타 정보를 출력
+ 31     print_irq_desc(irq, desc);
+
+통계 정보 수정
+ 32     kstat_this_cpu.irqs[irq]++;
+
+인터럽트에 대한 ACK 신호를 보냄
+ 33     ack_bad_irq(irq);
+ 34 }
+}}}
+
+
+
+
+
+
+
+
+= init_IRQ() - arch/x86_64/kernel/i8259.c =
+
+{{{
+505 void __init init_IRQ(void)
+506 {
+507     int i;
+508
+
+
+BSP의 Local APIC를 활성화, Virtual Wire Mode 으로 APIC 설정
+PIC 8259A 컨트롤러 설정, 8259A에 연결된 장치들의 인터럽트 번호를 0x30~0x3F 로 벡터를 정해줌
+irq_desc 테이블을 더미 값으로 초기화함
+일단 여기까지는 8259A PIC를 사용하지만 후에 IO APIC가 검출되면 각각의 irq_desc 항목에서 chip 관련 포인터를 IO APIC 정보로 수정한다.
+
+509     init_ISA_irqs();
+510     /*
+511      * Cover th
+e whole vector space, no vector can escape
+512      * us. (some of these will be overridden and become
+513      * 'special' SMP interrupts)
+514      */
+
+
+NR_VECTORS는 256, FIRST_EXTERNAL_VECTOR는 0x20임
+
+인터럽트 벡터 0x0~0x1F는 프로세서의 예외 처리를 위한 것이므로
+벡터 번호 0x20 부터 플랫폼 초기화에서 설정된 인터럽트 핸들러로 초기화한다.
+
+515     for (i = 0; i < (NR_VECTORS - FIRST_EXTERNAL_VECTOR); i++) {
+516         int vector = FIRST_EXTERNAL_VECTOR + i;
+517         if (vector != IA32_SYSCALL_VECTOR)
+518             set_intr_gate(vector, interrupt[i]);
+519     }
+520
+
+SMP 환경에서 프로세서의 APIC 기능을 사용하는 인터럽트
+arch/x86_64/kernel/entry.S에 정의되어 있다.
+이 파일에는 다른 인터럽트 핸들러와 예외 처리 핸들러의 시작 지점들이 정의되어있다.
+
+521 #ifdef CONFIG_SMP
+522     /*
+523      * The reschedule interrupt is a CPU-to-CPU reschedule-helper
+524      * IPI, driven by wakeup.
+525      */
+526     set_intr_gate(RESCHEDULE_VECTOR, reschedule_interrupt);
+527
+528     /* IPIs for invalidation */
+529     set_intr_gate(INVALIDATE_TLB_VECTOR_START+0, invalidate_interrupt0);
+530     set_intr_gate(INVALIDATE_TLB_VECTOR_START+1, invalidate_interrupt1);
+531     set_intr_gate(INVALIDATE_TLB_VECTOR_START+2, invalidate_interrupt2);
+532     set_intr_gate(INVALIDATE_TLB_VECTOR_START+3, invalidate_interrupt3);
+533     set_intr_gate(INVALIDATE_TLB_VECTOR_START+4, invalidate_interrupt4);
+534     set_intr_gate(INVALIDATE_TLB_VECTOR_START+5, invalidate_interrupt5);
+535     set_intr_gate(INVALIDATE_TLB_VECTOR_START+6, invalidate_interrupt6);
+536     set_intr_gate(INVALIDATE_TLB_VECTOR_START+7, invalidate_interrupt7);
+537
+538     /* IPI for generic function call */
+539     set_intr_gate(CALL_FUNCTION_VECTOR, call_function_interrupt);
+540
+541     /* Low priority IPI to cleanup after moving an irq */
+542     set_intr_gate(IRQ_MOVE_CLEANUP_VECTOR, irq_move_cleanup_interrupt);
+543 #endif
+544     set_intr_gate(THERMAL_APIC_VECTOR, thermal_interrupt);
+545     set_intr_gate(THRESHOLD_APIC_VECTOR, threshold_interrupt);
+546
+
+
+프로세서의 Local APIC에서 발생하는 타이머 인터럽트는 0xEF 벡터를 사용한다.
+apic_timer_interrupt 함수는 arch/x86_64/kernel/entry.S 에 정의되어 있다.
+apic_timer_interrupt는 어셈블리 함수로 스택 관련 처리를 한 후
+smp_apic_timer_interrupt() 함수를 호출하는 일을 한다.
+
+
+547     /* self generated IPI for local APIC timer */
+548     set_intr_gate(LOCAL_TIMER_VECTOR, apic_timer_interrupt);
+549
+550     /* IPI vectors for APIC spurious and error interrupts */
+551     set_intr_gate(SPURIOUS_APIC_VECTOR, spurious_interrupt);
+552     set_intr_gate(ERROR_APIC_VECTOR, error_interrupt);
+553
+
+
+i8254 하드웨어 타이머를 초기화함
+
+554     /*
+555      * Set the clock to HZ Hz, we already have a valid
+556      * vector now:
+557      */
+558     setup_timer_hardware();
+559
+560     if (!acpi_ioapic)
+561         setup_irq(2, &irq2);
+562 }
+}}}
+
+
+
+= enable_irq()/disable_irq() - kernel/irq/manage.c =
+
+
+
+여러개의 서로 다른 프로세스가 특정 라인의 인터럽트를  한꺼번에 금지시키거나 활성화시킬 수 있다. 따라서 각 인터럽트 라인마다 카운터를 두어서 인터럽트 금지와 활성화에 대한 상태를 관리한다.
+
+만약 A 프로세스가 인터럽트를 금지시켰다고 해도, B 프로세스가 이미 금지시킨 상태라면 카운터만 증가된다. 그리고 B 프로세스가 인터럽트를 활성화해도 A 프로세스가 아직 인터럽트를 금지시킨 상태이므로 카운터만 감소된다. A 프로세스가 인터럽트를 활성화해야 금지 횟수와 활성화 횟수가 맞아떨어지므로 인터럽트가 활성화된다.
+
+모든 프로세스는 인터럽트가 활성화된 상태라고 가정을 하고 동작을 시작한다. 그리고 필요에 따라 인터럽트를 금지시키고 얼마간의 처리 후 인터럽트를 활성화한다. 따라서 인터럽트 금지가 먼저 발생하므로 인터럽트 카운터는 항상 양수가 된다.
+
+주의할 것은 disable_irq 함수는 즉시 인터럽트를 금지시키지만 enable_irq 함수는 인터럽트가 언제 활성화될지 알 수 없다는 것이다.
+
+
+
+{{{
+136 /**
+137  *  enable_irq - enable handling of an irq
+138  *  @irq: Interrupt to enable
+139  *
+140  *  Undoes the effect of one call to disable_irq().  If this
+141  *  matches the last disable, processing of interrupts on this
+142  *  IRQ line is re-enabled.
+143  *
+144  *  This function may be called from IRQ context.
+145  */
+146 void enable_irq(unsigned int irq)
+147 {
+148     struct irq_desc *desc = irq_desc + irq;
+149     unsigned long flags;
+150
+151     if (irq >= NR_IRQS)
+152         return;
+153
+154     spin_lock_irqsave(&desc->lock, flags);
+
+enable_irq 함수가 호출되었다는 것은 현재 depth 값이 양수라는 가정을 할 수 있다.
+
+해당 인터럽트의 depth가 0이면 누군가가 인터럽트 금지보다 인터럽트 해지를 더 많이 실행한 것이다. depth가 0이라는 것은 인터럽트가 활성화된 상태인데 또 enable_irq 함수를 호출했다는 것은 문제가 있는 것이다. 이때는 depth 값을 바꾸지 않고 경고 메시지만 출력하고 종료한다.
+
+depth가 1이면 인터럽트가 금지되어있던 상태이므로 status 값에 인터럽트 금지 비트를 클리어하고, 인터럽트가 펜딩 상태인지 확인해서 펜딩 상태이면 인터럽트 핸들러를 호출한다.
+depth가 그 외의 값일 때는 값을 감소시키는 일만 한다.
+
+155     switch (desc->depth) {
+156     case 0:
+157         printk(KERN_WARNING "Unbalanced enable for IRQ %d\n", irq);
+158         WARN_ON(1);
+159         break;
+160     case 1: {
+161         unsigned int status = desc->status & ~IRQ_DISABLED;
+162
+163         /* Prevent probing on this irq: */
+164         desc->status = status | IRQ_NOPROBE;
+165         check_irq_resend(desc, irq);
+166         /* fall-through */
+167     }
+168     default:
+169         desc->depth--;
+170     }
+171     spin_unlock_irqrestore(&desc->lock, flags);
+172 }
+}}}
+
+
+
+{{{
+111 /**
+112  *  disable_irq - disable an irq and wait for completion
+113  *  @irq: Interrupt to disable
+114  *
+115  *  Disable the selected interrupt line.  Enables and Disables are
+116  *  nested.
+117  *  This function waits for any pending IRQ handlers for this interrupt
+118  *  to complete before returning. If you use this function while
+119  *  holding a resource the IRQ handler may need you will deadlock.
+120  *
+121  *  This function may be called - with care - from IRQ context.
+122  */
+123 void disable_irq(unsigned int irq)
+124 {
+125     struct irq_desc *desc = irq_desc + irq;
+126
+127     if (irq >= NR_IRQS)
+128         return;
+129
+
+지정된 인터럽트의 depth를 확인해서 0이면 인터럽트를 금지시키고 depth를 증가시킴.
+depth가 0이 아니면 증가시키기만 함.
+(즉, depth가 0보다 크면 해당 인터럽트는 금지된 상태이다.)
+
+130     disable_irq_nosync(irq);
+
+인터럽트 핸들러가 실행중이거나 펜딩 상태이면 핸들러가 끝날 때까지 기다림
+
+131     if (desc->action)
+132         synchronize_irq(irq);
+133 }
+}}}
+
+
+
+= do_IRQ() - arch/x86_64/kernel/irq.c =
+
+
+
+
+{{{
+101 /*
+102  * do_IRQ handles all normal device IRQ's (the special
+103  * SMP cross-CPU interrupts have their own specific
+104  * handlers).
+105  */
+106 asmlinkage unsigned int do_IRQ(struct pt_regs *regs)
+107 {
+108     struct pt_regs *old_regs = set_irq_regs(regs);
+109
+110     /* high bit used in ret_from_ code  */
+111     unsigned vector = ~regs->orig_rax;
+112     unsigned irq;
+113
+114     exit_idle();
+
+
+인터럽트 실행 도중에 커널이 선점되지 않도록 함.
+다른 인터럽트는 받을 수 있지만 소프트인터럽트의 처리나 스케줄 등은 실행되지 않음
+
+115     irq_enter();
+
+
+IRQ 벡터 번호 알아내기,  vector_irq라는 배열이 있는것 같은데 찾지 못하겠음.
+
+
+116     irq = __get_cpu_var(vector_irq)[vector];
+117
+118 #ifdef CONFIG_DEBUG_STACKOVERFLOW
+119     stack_overflow_check(regs);
+120 #endif
+121
+122     if (likely(irq < NR_IRQS))
+
+generic_handle_irq()는 __do_IRQ()를 호출한다. 실제 핸들러를 호출하기 위한 작업은 __do_IRQ()에서 실행함.
+
+123         generic_handle_irq(irq);
+124     else {
+125         if (!disable_apic)
+126             ack_APIC_irq();
+127
+128         if (printk_ratelimit())
+129             printk(KERN_EMERG "%s: %d.%d No irq handler for vector\n",
+130                 __func__, smp_processor_id(), vector);
+131     }
+132
+133     irq_exit();
+134
+135     set_irq_regs(old_regs);
+136     return 1;
+137 }
+}}}
+
+
+
+
+
+{{{
+156  * __do_IRQ - original all in one highlevel IRQ handler
+157  * @irq:    the interrupt number
+158  *
+159  * __do_IRQ handles all normal device IRQ's (the special
+160  * SMP cross-CPU interrupts have their own specific
+161  * handlers).
+162  *
+163  * This is the original x86 implementation which is used for every
+164  * interrupt type.
+165  */
+166 fastcall unsigned int __do_IRQ(unsigned int irq)
+167 {
+168     struct irq_desc *desc = irq_desc + irq;
+169     struct irqaction *action;
+170     unsigned int status;
+171
+172     kstat_this_cpu.irqs[irq]++;
+
+로컬 프로세서의 내부 인터럽트일 경우 빨리 처리할 수 있도록 따로 확인하는 부분을 만들어주었다.
+예를 들어 x86_64는 각 프로세서마다 로컬 타이머 등의 Local APIC에서 발생하는 인터럽트가 있다.
+
+173     if (CHECK_IRQ_PER_CPU(desc->status)) {
+174         irqreturn_t action_ret;
+175
+176         /*
+177          * No locking required for CPU-local interrupts:
+178          */
+179         if (desc->chip->ack)
+180             desc->chip->ack(irq);
+181         action_ret = handle_IRQ_event(irq, desc->action);
+182         if (!noirqdebug)
+183             note_interrupt(irq, desc, action_ret);
+184         desc->chip->end(irq);
+185         return 1;
+186     }
+187
+
+irq_desc 테이블에 접근하기 위해 스핀락을 걸어줌
+
+188     spin_lock(&desc->lock);
+
+PIC에 ACK 신호 보내줌. 이때부터 같은 인터럽트가 또 발생할 수 있게 된다.
+
+189     if (desc->chip->ack)
+190         desc->chip->ack(irq);
+191     /*
+192      * REPLAY is when Linux resends an IRQ that was dropped earlier
+193      * WAITING is used by probe to mark irqs that are being tested
+194      */
+195     status = desc->status & ~(IRQ_REPLAY | IRQ_WAITING);
+
+현재 인터럽트가 처리중이라는 표시를 하는 PENDING 비트 설정
+
+196     status |= IRQ_PENDING; /* we _want_ to handle it */
+197
+198     /*
+199      * If the IRQ is disabled for whatever reason, we cannot
+200      * use the action we have.
+201      */
+202     action = NULL;
+
+
+IRQ_DISABLED 비트가 설정되어 있는데도 인터럽트가 발생했으면 하드웨어에 문제가 있어서 활성화하지 않은 인터럽트가 발생한 경우이다.
+IRQ_INPROGRESS 비트가 설정되어 있는 것은 다른 프로세서가 해당 인터럽트를 처리하고 있는 중이라는 의미이다.
+이 두 경우가 아니라면 IRQ_PENDING 비트를 지우고 IRQ_INPROGRESS 비트를 설정하고 계속 처리를 진행한다.
+
+203     if (likely(!(status & (IRQ_DISABLED | IRQ_INPROGRESS)))) {
+204         action = desc->action;
+205         status &= ~IRQ_PENDING; /* we commit to handling */
+206         status |= IRQ_INPROGRESS; /* we are handling it */
+207     }
+208     desc->status = status;
+209
+210     /*
+211      * If there is no IRQ handler or it was disabled, exit early.
+212      * Since we set PENDING, if another processor is handling
+213      * a different instance of this same irq, the other processor
+214      * will take care of it.
+215      */
+
+IRQ_DISABLED나 IRQ_INPROGRESS 비트가 설정되어 있다면 action 변수에 값이 없을 것이므로 인터럽트 핸들러가 실행되지 않고 종료된다. 하지만 IRQ_PENDING비트를 설정해 놓았으므로 먼저 실행된 인터럽트 핸들러가 종료된 후 IRQ_PENDING비트를 체크해서 다시 핸들러를 실행시켜준다. 
+결국 동일한 인터럽트가 중첩해서 발생했을 때 do_IRQ부터 핸들러까지 완전히 다시 실행해주는 것이 아니라 핸들러만 여러번 호출하는 방법으로 빠르게 처리하게 된다.
+
+216     if (unlikely(!action))
+217         goto out;
+218
+219     /*
+220      * Edge triggered interrupts need to remember
+221      * pending events.
+222      * This applies to any hw interrupts that allow a second
+223      * instance of the same irq to arrive while we are in do_IRQ
+224      * or in the handler. But the code here only handles the _second_
+225      * instance of the irq, not the third or fourth. So it is mostly
+226      * useful for irq hardware that does not mask cleanly in an
+227      * SMP environment.
+228      */
+229     for (;;) {
+230         irqreturn_t action_ret;
+231
+
+irq_desc 테이블에 접근하지 않고, 핸들러를 처리하는 시간이 길어질 수 있기 때문에 스핀락을 해지한다.
+
+232         spin_unlock(&desc->lock);
+233
+234         action_ret = handle_IRQ_event(irq, action);
+235         if (!noirqdebug)
+236             note_interrupt(irq, desc, action_ret);
+237
+238         spin_lock(&desc->lock);
+
+위에서 IRQ_PENDING 비트를 지웠지만 여기까지 오는 도중에 만약 동일한 인터럽트가 또 발생하거나 다른 프로세서에서 인터럽트를 받아다면 IRQ_PENDING 비트가 다시 설정될 것이다.
+따라서 IRQ_PENDING 비트를 확인해서 비트가 1인 경우에는 핸들러를 다시 실행해주어야 한다.
+
+239         if (likely(!(desc->status & IRQ_PENDING)))
+240             break;
+241         desc->status &= ~IRQ_PENDING;
+242     }
+
+인터럽트 처리가 끝났음을 표시한다.
+
+243     desc->status &= ~IRQ_INPROGRESS;
+244
+245 out:
+246     /*
+247      * The ->end() handler has to deal with interrupts which got
+248      * disabled while the handler was running.
+249      */
+
+PIC에서도 인터럽트 처리의 종료에 필요한 처리를 한다.
+
+250     desc->chip->end(irq);
+251     spin_unlock(&desc->lock);
+252
+253     return 1;
+254 }
+}}}
+
+
+
+
+
+
+{{{
+
+122 /**
+123  * handle_IRQ_event - irq action chain handler
+124  * @irq:    the interrupt number
+125  * @action: the interrupt action chain for this irq
+126  *
+127  * Handles the action chain of an irq event
+128  */
+129 irqreturn_t handle_IRQ_event(unsigned int irq, struct irqaction *action)
+130 {
+131     irqreturn_t ret, retval = IRQ_NONE;
+132     unsigned int status = 0;
+133
+134     handle_dynamic_tick(action);
+135
+136     if (!(action->flags & IRQF_DISABLED))
+137         local_irq_enable_in_hardirq();
+138
+
+
+하나의 IRQ 라인을 여러가지 장치가 공유하기 때문에 여러가지 인터럽트 핸들러가 있을 수 있다.
+따라서 핸들러의 리스트를 돌면서 모든 핸들러를 실행해주어야 한다.
+각각의 핸들러는 자신이 담당하는 장치의 인터럽트인지를 확인하는 일을 해야 한다.
+핸들러에 전달하는 dev_id 값을 이용해서 장치를 식별할 수도 있고, 자신만의 방법을 사용할 수도 있다.
+
+139     do {
+140         ret = action->handler(irq, action->dev_id);
+
+핸들러의 반환값이 IRQ_HANDLED이면 핸들러가 정상적으로 인터럽트를 처리했다는 의미이다.
+
+141         if (ret == IRQ_HANDLED)
+142             status |= action->flags;
+143         retval |= ret;
+144         action = action->next;
+145     } while (action);
+146
+147     if (status & IRQF_SAMPLE_RANDOM)
+148         add_interrupt_randomness(irq);
+
+현재 프로세서의 인터럽트를 금지하면서 끝내지만 do_IRQ() 함수가 끝나면서 인터럽트가 발생하기 전의 하드웨어 레지스터를 복구할 때 다시 이전의 상태로 돌아간다.
+
+149     local_irq_disable();
+150
+151     return retval;
+152 }
+}}}
+
+
+
+
+
+= 인터럽트 발생 과정 =
+
+(2.6.22 기준)
+
+ 1. IDT에 각 인터럽트의 엔트리 포인트 주소를 저장해줌
+
+ 2. 어셈블리로 작성된 엔트리 포인트 실행 (arch/x86_64/kernel/entry.S) 
+  - 스택에 인터럽트 번호 저장
+  - 스택에 모든 하드웨어 레지스터 값을 저장
+
+인터럽트가 발생하면 가장 먼저 실행되는 지점은 스택에 직접 하드웨어 컨텍스트를 저장해야 하기 때문에 어셈블리로 만들어야 한다.
+gas의 매크로를 이용해서 최대 갯수의 인터럽트 엔트리 포인트를 만들어 놓는다.
+
+인터럽트가 발생하면 프로세서가 자동으로 커널 모드 스택으로 스택 위치를 바꿔준다.
+가장 먼저 하드코딩된 인터럽트 벡터 값을 스택에 저장하고 common_interrupt라는 함수로 점프한다.
+common_interrupt 함수에서는 하드웨어 레지스터 값을 스택에 저장하고 do_IRQ 함수를 호출한다.
+
+
+ 3. do_IRQ()
+  - 프로세서 선점 금지 - 스케줄링을 금지 시킴 
+  (인터럽트 처리 중에는 인터럽트 컨텍스트 상에서 동작하므로 현재 특정 프로세스상에서 동작하는 것이 아니다. 따라서 스케줄링 될 수 있는 프로세스가 없으므로 스케줄링을 할 수 없다.)
+  - generic_handle_irq 호출
+
+ 4. generic_handle_irq()
+  - 인터럽트 핸들러가 있으면 __do_IRQ 호출
+
+ 5. __do_IRQ()
+  - 인터럽트 발생 통계 정보 갱신
+  - PIC 칩에 ack 함수 호출
+  - 상태 변수에 IRQ_PENDING 비트 설정
+  (만약 인터럽트 처리 중에 동일한 인터럽트가 또 발생했으면 인터럽트를 금지시킨 상태가 아닌 경우에는 다시 여기까지 실행된다. 그리고 IRQ_PENDING비트를 설정하게 된다. 그런데 이미 인터럽트를 처리하고 있으므로 IRQ_PROGRESS 비트가 설정되어 있는 상태이므로 IRQ_PENDING비트만 설정하고 종료한다. 먼저 인터럽트 처리를 하고 있던 컨텍스트 상에서 핸들러가 종료된 후 IRQ_PENDING비트를 체크하고 비트가 설정되어 있으면 다시 핸들러를 호출한다. 이렇게 IRQ의 중첩 발생을 처리한다.)
+  (그래도 IRQ_PENDING비트가 설정되어 있고 아직 처리안된 상황에서 또 인터럽트가 발생한다면 인터럽트를 잃어버릴 수 있지 않을까? 그래서 하드인터럽트와 소프트인터럽트를 잘 구분하는 디자인이 필요할 것 같다.)
+  - 정상적인 인터럽트 발생인지 검사
+  - 만약 IRQ_INPROGRESS 비트가 설정되어 있으면 다른 프로세서에서 처리중인 인터럽트이므로 종료
+  - IRQ_PROGRESS 비트가 설정되지 않았으면 IRQ_PENDING비트를 지우고 상태 변수에 IRQ_INPROGRESS 비트 설정
+  - handle_IRQ_event 호출
+
+ 6. handle_IRQ_event
+  - 인터럽트 라인에 연결된 핸들러 리스트를 돌면서 모든 핸들러를 실행
+  - 로컬 프로세서의 인터럽트를 금지 시킴
+  - 함수 종료
+
+ 7. __do_IRQ()
+  - IRQ_PENDING 비트가 설정되어 있는지 확인 - 설정되어 있으면 그 사이 인터럽트가 또 발생했고 IRQ_PENDING 비트를 설정한 것임.
+  - IRQ_PENDING 비트가 설정되어 있으면 handle_IRQ_event 다시 실행
+  - IRQ_INPROGRESS 비트 클리어
+  - PIC 칩의 end 함수 호출
+
+ 8. do_IRQ()
+  - 프로세서 선점 활성화
+
+ 8. common_interrupt
+  - 스택 복구
+  - 커널 모드에서 유저 모드로 변경 -> 프로세스 다시 실행됨
+
+
+
+
+
+
+= 기타 =
+
+ * 인터럽트를 등록할 때 SA_INTERRUPT 플래그가 설정된 핸들러를 등록하면 어떻게 처리되나? 하나의 핸들러만 등록되나?
+
+ * 인터럽트 핸들러가 처리되는 중에는 인터럽트가 금지되지 않음. 핸들러 안에서 직접 인터럽트를 금지하거나 스핀락을 이용할 것.
+
+
+ * 타이머 인터럽트 핸들러 분석 문서 http://lks.springnote.com/pages/633973
+
+{{{
+version history
+
+    * 2007년 11월 24일- 최초 버전 작성 (유상민, 송형주)
+    * 2007년 12월 5일 - 문서 통합 및 내용 추가 및 수정 필요 부분 빨간색으로 표시 (송형주)
+    * 2007년 12월 8일 - scheduler_tick 함수 추가 (송형주)
+    * 2008년  3월 13일 - apic_runs_main_timer 내용 추가 (남용우)
+
+ 
+
+리눅스 타이머 인터럽트 동작은 아래 코드에서와 같이 time_init() 함수에서,
+타이머 인터럽트 핸들러를 지정하는 것에서부터 시작한다.
+
+   1.  static struct irqaction irq0 = {
+   2.         timer_interrupt, IRQF_DISABLED, CPU_MASK_NONE, "timer", NULL, NULL
+   3. };
+   4. ...
+   5. setup_irq(0, &irq0); // timer_interrupt()함수를 타이머 인터럽트 핸들러로 지정. 
+
+ 
+ timer_interrupt()
+
+    *
+
+      apic_runs_main_timer > 1 이면 타이머 인터럽트 핸들러 종료.
+          o apic_runs_main_timer에 대한 자세한 내용은 추후 수정필요--형주 
+          o
+
+            apci_runs_main_timer는 acpi timer을 메인타이머로 사용할지를 결정한다.
+
+             
+
+    * main_timer_handler() 호출
+    *
+
+      SMP 시스템에서 APIC 타이머를 사용한다면,
+          o 현재 CPU가 타이머 인터럽트를 이미 수행했으므로, 다른 cpu가 타이머 인터럽트를 수행할 필요가 없다는 것을
+            알려 주기 위해 IPI를 보냄.
+
+ 
+main_timer_handler()
+
+    *
+
+      타이머 인터럽트의 소스로 사용 중인 타이머의 하드웨어 dealy를 측정함.
+          o 현재 분석에서는 PIT가 타이머 인터럽트를 제공해 준다고 가정해서 분석함. 
+          o PIT에서 delay를 측정하는 기법은 타이머를 초기화한 값과 발생한 값을 비교해서 측정한다.
+            이를 위해서는 현재 PIT의 카운터값을 읽을 수 있어야 한다. (아래 참조)
+
+[참고] PIT에서 값 읽기
+
+    As a timer counts down, its value can also be read directly by reading its I/O port twice, first for the low byte,
+     and then for the high byte. The first read latches the value, so that both bytes read will belong to one and the same value.
+
+타이머를 읽기 위해서는 I/O 포트를 두번 읽어야 한다. 그 과정 그리고 이 코드가 이렇게 된다. ref latch 회로 참고
+
+   1. } else if (!pmtmr_ioport) {
+   2.                 spin_lock(&i8253_lock);
+                      outb_p(0x00, 0x43);
+                      delay = inb_p(0x40);
+                      delay |= inb(0x40) << 8;
+                      spin_unlock(&i8253_lock);
+                      delay = LATCH - 1 - delay;               
+
+ 
+
+   1. delay = ((CLOCK_TICK_RATE + HZ/2) / HZ) - 1 - delay;
+
+ 
+
+   1. delay = (( PIT_TICK_RATE  + HZ/2) / HZ) - 1 - delay;
+
+LATCH 값은 이미 setup_pit_timer 에서 초기화 하였다. ( 리눅스 커널의 이해 3판 p246 )
+
+ http://en.wikipedia.org/wiki/Intel_8253#Programming_Considerations
+
+ 
+
+    *
+
+      TSC를 구한다.
+          o rdtsc명령으로 현재 cpu의 TSC 값을 읽어온다.
+          o --> 타이머 인터럽트가 발생시에, vxtime 변수에 tsc 값을 갱신해 주어야 하기 때문이다. 
+
+    RDTSC Read Time-Stamp Counter
+
+     
+
+    Loads the value of the processor’s 64-bit time-stamp counter into registers EDX:EAX.
+
+
+    The time-stamp counter is contained in a 64-bit model-specific register (MSR). The processor sets the
+    counter to 0 upon reset and increments the counter every clock cycle. INIT does not modify the TSC.
+
+
+    The high-order 32 bits are loaded into EDX, and the low-order 32 bits are loaded into the EAX register.
+    This instruction ignores operand size.
+
+ 
+
+ 
+
+    *
+
+      CPU가 TSC값으로 측정한 타이머 인터럽트 주기(실제 타이머 인터럽트가 발생한 주기)와
+      타이머 인터럽트에서 설정한 주기를 비교하여, 타이머 인터럽트의 발생 delay를 측정함.
+          o 가령, 타이머 인터럽트가 1ms 마다 발생해야 하지만 sw의 처리 delay로 늦게 1.2ms 정도에
+            발생할 수도 있다.
+            또는 2.2ms에 발생했다면, 타이머 인터럽트가 유실된 것이다.
+          o 타이머 인터럽트가 늦게 발생했거나 유실됐을 경우, lost 및 offset 값을 구해줌.
+
+ 
+
+    * 이전 타이머 인터럽트에서 현재 타이머 인터럽트 사이의 시간을 나노초로 구해서 monotonic_base 변수에 저장.
+
+ 
+
+    * 위에서 측정한 HW상의 타이머 인터럽트 delay 및 타이머 인터럽트 발생 지연을 보정해서,
+      현재의 TSC 값을 vxtime.last_tsc에 저장함. (TSC 업데이트)
+
+ 
+
+    *
+
+      만약, 타이머 인터럽트의 유실수가 특정값을 넘으면,
+          o 경고 메시지 출력 및 CPU 클럭을 변경한다.
+
+ 
+
+ 
+do_timer()
+
+    *
+
+       jiffies 변수(시스템이 시작된 이후 경과된 타이머 틱의 수를 저장하는 카운터)를 1 증가시킨다.
+          o 이때, 타이머 인터럽트 처리가 지연되서, 타이머 틱을 놓쳤을때는 잃어버린 틱수 만큼을 추가로 더해준다.
+    * xtime 변수 (리눅스의 현재 시간과 날짜를 저장)를 갱신한다. --> update_wall_time()
+    * 시스템 내의 활성화된 프로세스들의 개수를 구해서, 5초 단위로 시스템 부하 상태를 측정함. --> calc_load()
+
+ 
+
+[참고] jiffies, xtime 변수
+
+타이머 인터럽트 핸들러의 주작업은 바로 위 두 변수를 갱신하는 것이다.
+
+    * jiffies 변수는 시스템이 시작된 이후 경과된 타이머 Tick의 수를 저장하는 카운터이다.
+    * xtime 변수는 리눅스의 현재 시간과 날짜를 저장하는데 사용된다.
+
+ 
+update_times()
+
+    *
+
+      타이머 인터럽트가 수행되면, do_timer에 의해 호출된다. (xtime_lock이 있어야 한다.)
+          o update_wall_time() 호출
+          o calc_load() 호출
+
+ 
+update_wall_time()
+
+    *
+
+      clocksource를 사용해서, xtime을 갱신한다.
+      여기서, clocksource는 xtime을 갱신하기 위해 리눅스가 사용하는 타이머 인터럽스 소스의 근원으로,
+      타이머 인터럽트 발생시, xtime 갱신을 위해 더해줘야 하는 interval 값(xtime_interval) 등이 포함되어 있는 구조체이다.
+      update_wall_time()함수는 clocksource의 xtime_interval 값을 이용해서, 타이머 인터럽트가 발생할때마다
+      xtime 값을 갱신해주다.
+          o 현재 시스템에서는 타이머 인터럽트 틱 주기가 1ms (HZ=1000)이므로,
+          o xtime.tv_nsec에 1000000을 더한다. (1ms == 1000000ns)
+          o
+
+            이때, xtime.tv_nsec이 오버플로우가 발생하면
+                + xtime.tv_sec(초단위)을 증가시키고,
+                + xtime.tv_nsec에서 10^9을 빼준다.
+
+    *
+
+      타이머 오차 보정
+    *
+          o 리눅스 동작 이해와는 약간의 거리가 있으므로, 그런게 있다라는 정도로 skip~ 
+
+ 
+
+참고로, wall_time은 xtime을 의미하는 것이 아닌지?? (형주 생각)
+
+ 
+calc_load()
+
+    *
+
+      이 함수는 내부 카운터를 이용해서, 5초마다 시스템 평균 부하를 측정하는 함수다.
+          o 시스템의 평균 부하는 현재 시점에서 마지막 1분, 5분, 15분 동안의 부하도를 측정해서, 특정 변수에 저장하며
+            이는 5초마다 갱신됨.
+    *
+
+      시스템 평균 부하를 측정하기 위해서 활성화된 태스크의 수(nr_actives)가 필요하다.
+          o 이러한 작업은 count_active_tasks() 함수로 구하면, TASK_RUNNING와 TASK_UNINTERRUPTIBLE 상태에 있는
+            프로세스 개수의 합을 리턴.
+          o 주목할 점은, 리눅스에서는 TASK_RUNNING과 TASK_UNINTERRUPTIBLE 상태에 있는 모든 프로세스를
+            평균 부하를 구하는데 포함한다. 그렇지만 정상적인 경우에 TASK_UNINTERRUPTIBLE 상태에 있는 프로세스는
+            거의 없기때문에 부하가 높다는 것은 보통 CPU가 바쁘다는 것을 의미한다. (리눅스 커널의 이해 3판, P258) 
+          o 참고 : 프로세스 상태
+
+smp_local_timer_interrupt()
+
+SMP 시스템인 경우 local APIC 타이머 인터럽트를 사용해서, 각 CPU의 프로파일링(현재 CPU의 레지스터 상태나
+각종 통계 정보의 갱신)과 프로세스별 시스템 실행 시간(유저 모드 시간 + 커널 모드 시간)등을 측정
+
+    *
+
+      profile_tick()
+          o 커널 코드 분석을 위해 사용됨. 
+          o 좀더 자세한 설명은, 리눅스 커널의 이해 3판 258페이지 '커널 코드 활동 분석' 부분 참조
+    * update_process_time()  호출
+
+ 
+ update_process_times()
+
+ 이 함수는 유니프로세서 시스템에서는 전역 타이머 인터럽트 핸들러가 호출하지만,
+SMP 시스템에서는 지역 타이머 인터럽트 핸들러에 의해 호출된다.
+
+    *
+
+       현재 실행중인 프로세스의 실행 모드(유저모드 or 커널모드)를 파악해서 task_struct의
+      utime(사용자 모드에서 사용된 틱)이나 stime(커널모드에서 사용된 틱) 필드를 갱신한다.
+          o 리눅스의 time 명령어 등에서 사용됨.
+    * /proc/stat에서 볼 수 있는 cpu 상태 등을 갱신함.
+
+참고 - preempt_count 값에 대해서.
+
+   1.  struct thread_info {
+   2.         struct task_struct    *task;         /* main task structure */
+   3.         struct exec_domain    *exec_domain;  /* execution domain */
+   4.         __u32                 flags;         /* low level flags */
+   5.         __u32                 status;        /* thread synchronous flags */
+   6.         __u32                 cpu;           /* current CPU */
+   7.         int              preempt_count;      /* 0 => preemptable, <0 => BUG */
+   8.         mm_segment_t          addr_limit;
+   9.         struct restart_block  restart_block;
+  10. };
+
+여기서 thread_info 구조체를 보면, preempt_count 필드가 있다. 이 변수는 0이면 선점 가능이고,
+0 이상이면 선점 불가능을 표시하는 용도로 사용된다.
+
+하지만, preempt_count 변수는 단순한 카운터가 아닌, 아래와 같은 방식으로 구성된 변수 이다.
+
+따라서, preempt_count 변수를 사용하기 위해서는 해당 영역을 마스킹해서 사용해야 한다.
+
+15.jpg
+
+ 
+
+ 
+
+    *
+
+      TIMER_SOFTIRQ를 raise함. : 타이머 인터럽트의 보톰하프를 처리
+          o raise된 softirq는 do_softirq() 함수에 의해 실행된다.
+    * 현재 cpu에서 지연된 RCU가 있다면, rcu 업데이트를 위한 task_let을 스케쥴한다.
+    *
+
+      scheduler_tick() 함수 호출
+          o 현재 프로세스의 타임 슬라이스 카운터를 감소시키고, 할당량을 모두 소진했는지 검사한다.
+    *
+
+      run_posix_cpu_timers() 함수 호출
+          o 현재 프로세스에 설정된 posix 타이머가 만료됐느지를 체크하여, 됐다면 signal 전송
+}}}
+
+

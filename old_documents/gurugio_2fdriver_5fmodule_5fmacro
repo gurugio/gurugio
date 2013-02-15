@@ -1,0 +1,312 @@
+'''커널 드라이버 모듈과 관련된 커널 코드 분석'''
+
+
+
+[[TableOfContents]]
+
+
+
+= module_init 매크로 =
+
+include/linux/init.h 파일에 모듈과 관련된 대부분의 매크로가 정의되어 있다. module_init 매크로는 커널 컴파일 옵션에서 모듈을 사용할 때와 사용하지 않을 때에 따라서 다르게 정의된다.
+
+
+
+== 드라이버 모듈을 사용하지 않을 때 ==
+
+모듈을 사용하지 않도록 커널 옵션을 선택하면 module_init() 은 __initcall 매크로 -> device_initcall 함수 -> __define_initcall 매크로를 호출한다.
+
+{{{
+76 typedef int (*initcall_t)(void);
+
+...
+
+107 #define __define_initcall(level,fn,id) \
+108     static initcall_t __initcall_##fn##id __attribute_used__ \
+109     __attribute__((__section__(".initcall" level ".init"))) = fn
+
+...
+
+130 #define device_initcall(fn)     __define_initcall("6",fn,6)
+
+...
+
+135 #define __initcall(fn) device_initcall(fn)
+
+...
+
+186 /**
+187  * module_init() - driver initialization entry point
+188  * @x: function to be run at kernel boot time or module insertion
+189  *
+190  * module_init() will either be called during do_initcalls() (if
+191  * builtin) or at module insertion time (if a module).  There can only
+192  * be one per module.
+193  */
+194 #define module_init(x)  __initcall(x);
+}}}
+
+최종적으로 __define_initcall 매크로가 호출되는데 예를 들어 module_init(hello_init) 이라는 매크로는 __define_initcall 매크로에 의해 다음과 같이 변환된다.
+
+{{{
+static initcall_t __initcall_hello_init6 __attribute_used__ __attribute__((__section__(".initcall6.init")))   = hello_init;
+}}}
+
+initcall_t 타입의 함수 포인터 __initcall_hello_init6가 생성되고 hello_init 함수의 시작 주소가 저장된다. initcall_t 타입은 76라인에 int 값을 반환하고 함수 인자를 갖지않는 함수 포인터 타입으로 정의되어 있다.
+
+그리고 이렇게 정의된 함수 포인터 변수 __initcall_hello_init6를 initcall6.init 이라는 섹션에 따로 모아서 저장한다. 이 섹션을 확인하기 위해서는 리눅스 커널의 링커 스크립트 파일 arch/i386/kernel/vmlinux.lds.S 파일을 참고한다. initcall.init 이라는 섹션 안에 initcall6.init 섹션이 있는 것을 확인할 수 있다. 커널이 부팅할 때 이 섹션에 있는 함수 포인터들을 레벨 순서대로 호출해주고, 이때 __initcall_hello_init6 함수 포인터도 호출되므로 드라이버의 등록 함수 hello_init이 호출되는 것이다.
+
+결론적으로 말하면 드라이버를 모듈로 관리하지 않고 개발자가 만든 모듈 초기화 함수의 포인터를 따로 정적 변수로 저장해서 관리한다.
+
+
+
+== 드라이버를 모듈로 관리할 때 (insmod 프로그램의 실행 과정) ==
+
+커널 옵션에서 모듈 관리를 활성화시키면 다음과 같이 module_init 매크로가 정의된다.
+
+{{{
+227 /* Each module must use one module_init(), or one no_module_init */
+228 #define module_init(initfn)                 \
+229     static inline initcall_t __inittest(void)       \
+230     { return initfn; }                  \
+231     int init_module(void) __attribute__((alias(#initfn)));
+}}}
+
+initcall_t 타입의 __inittest 함수를 정의한다. __inittest 함수는 hello_init 같이 드라이버가 작성한 드라이버 초기화 함수의 포인터를 반환한다. 그리고 init_module() 함수를 선언하는데 __attribute__ ((alias)) 속성을 사용한다. 이 것은 init_module 함수의 이름을 만들지만 실제적으로는 init_module 함수를 initfn 함수의 별칭으로 만든다는 것이다. 다시 말하면, init_module 함수는 이름만 있는 함수이고 init_module을 호출하면 hello_init이 호출된다는 것이다. 
+
+init_module 함수는 2.4 커널에서 드라이버 모듈에서 공통적으로 정의해야하는 함수였다. 커널 2.6에서는 module_init 매크로로 대체되었다고 보통 설명하고 있지만 사실은 이렇게 숨겨진 것이었다. 2.4커널에서 init_module 함수를 반드시 정의해야 했다면, 2.6 커널에서는 alias라는 gcc의 builtin 기능을 이용해서 이름을 숨긴 것일 뿐이다.
+
+모듈을 등록하기 위해서 insmod 프로그램을 실행하면 insmod 프로그램은 .ko 파일을 메모리로 읽어와서 init_module 시스템 콜을 호출한다.
+
+busybos-1.10.0 패키지에서 modutiles/insmod.c 파일을 열면 insmod_main 함수는 명령행 인자와 드라이버 파일 이름을 가지고 bb_init_module 함수를 호출하고, bb_init_module함수는 init_module 시스템 콜을 호출하는 것을 알 수 있다.
+
+{{{
+14 int insmod_main(int argc UNUSED_PARAM, char **argv)
+{
+...
+28     rc = bb_init_module(filename, parse_cmdline_module_options(argv));
+...
+}
+
+114 int FAST_FUNC bb_init_module(const char *filename, const char *options)
+115 {
+116     size_t len = MAXINT(ssize_t);
+117     char *image;
+118     int rc = ENOENT;
+119
+...
+124
+125     /* Use the 2.6 way */
+126     image = xmalloc_open_zipped_read_close(filename, &len);
+127     if (image) {
+128         if (init_module(image, len, options) != 0)
+129             rc = errno;
+130         else
+131             rc = 0;
+132         free(image);
+133     }
+134
+135     return rc;
+136 }
+
+}}}
+
+다음은 2.6.22 커널의 kernel/module.c 파일에 있는 sys_init_module 함수 코드의 일부분이다. insmod 프로그램이 넘긴 .ko 파일 이미지의 포인터가 umod이고 load_module 함수는 umod 데이터에서 모듈 등록에 필요한 정보를 읽어서 mod 변수에 저장한다. 따라서 mod->init 은 hello_init 함수의 포인터가 된다.
+
+{{{
+
+1979 /* This is where the real work happens */
+1980 asmlinkage long
+1981 sys_init_module(void __user *umod,
+1982         unsigned long len,
+1983         const char __user *uargs)
+1984 {
+1985     struct module *mod;
+...
+
+1996     /* Do all the hard work */
+1997     mod = load_module(umod, len, uargs);
+
+...
+2013     /* Start the module */
+2014     if (mod->init != NULL)
+2015         ret = mod->init();
+...
+
+}}}
+
+
+load_module 함수를 찾아보면 커널 심볼을 읽는 부분을 볼 수 있다. 디바이스 드라이버에서는 EXPORT_SYMBOL 매크로를 이용해서 다른 드라이버에서 호출할 수 있도록 커널 심볼 테이블에 등록한다. EXPORT_SYMBOL 매크로는 __ksymtab 이라는 elf 파일의 섹션에 심볼들을 저장시켜놓고 load_module 함수는 __ksymtab 섹션을 읽어서 읽혀지는 심볼들과 심볼들의 갯수를 struct module의 syms, num_syms 필드에 저장한다.
+
+
+{{{
+1554 /* Allocate and load the module: note that size of section 0 is always
+1555    zero, and we rely on this for optional sections. */
+1556 static struct module *load_module(void __user *umod,
+1557                   unsigned long len,
+1558                   const char __user *uargs)
+1559 {
+...
+1661     exportindex = find_sec(hdr, sechdrs, secstrings, "__ksymtab");
+...
+
+1812     /* Set up EXPORTed & EXPORT_GPLed symbols (section 0 is 0 length) */
+1813     mod->num_syms = sechdrs[exportindex].sh_size / sizeof(*mod->syms);
+1814     mod->syms = (void *)sechdrs[exportindex].sh_addr;
+...
+
+}}}
+
+
+
+
+= EXPORT_SYMBOL 매크로 =
+
+드라이버에서 만든 심볼을 커널의 심볼 테이블에 저장하기 위해 사용하는 매크로이다. 다음과 같이 정의되어 있다.
+
+
+
+{{{
+188 /* For every exported symbol, place a struct in the __ksymtab section */
+189 #define __EXPORT_SYMBOL(sym, sec)               \
+190     extern typeof(sym) sym;                 \
+191     __CRC_SYMBOL(sym, sec)                  \
+192     static const char __kstrtab_##sym[]         \
+193     __attribute__((section("__ksymtab_strings")))       \
+194     = MODULE_SYMBOL_PREFIX #sym;                        \
+195     static const struct kernel_symbol __ksymtab_##sym   \
+196     __attribute_used__                  \
+197     __attribute__((section("__ksymtab" sec), unused))   \
+198     = { (unsigned long)&sym, __kstrtab_##sym }
+199
+200 #define EXPORT_SYMBOL(sym)                  \
+201     __EXPORT_SYMBOL(sym, "")
+}}}
+
+예를 들어 EXPORT_SYMBOL(hello)라고 매크로를 호출하면 다음과 같이 선언된다.
+
+{{{
+static const char __kstrtab_hello[] __attribute_((section("__ksymtab_strings"))) = "hello";
+static const struct kernel_symbol __ksymtab_hello __attribute__((section("__ksymtab"))) 
+	= {(unsigned long)&hello, __kstrtab_hello }
+}}}
+
+__kstrtab_hello 라는 문자열 포인터를 만들어서 심볼 이름에 대한 포인터를 저장하고, __kstrtab_hello 문자열 포인터를 __ksymtab_strings 섹션에 저장한다. 그리고 struct kernel_symbol 구조체 타입의 __ksymtab_hello 변수를 만들어서 심볼의 주소와 이름을 저장한다. 즉 결과적으로 심볼의 이름과 심볼의 주소를 elf 포맷의 특정 섹션에 저장해놓고 커널이 모듈을 로드할 때 커널 심볼 테이블로 읽을 수 있도록 해주는 것이다.
+
+
+이 심볼 테이블을 눈으로 확인하기 위해서 일반적인 시디롬 드라이버 파일의 섹션 정보를 읽어보았다. 다음과 같이 .ko 파일에 __ksymtab 섹션과 __ksymtab_strings 섹션이 있음을 확인할 수 있고 cdrom.c 파일에서 EXPORT_SYMBOL 매크로를 이용해서 선언한 심볼들이 /proc/kallsyms에 나타남을 알 수 있다.
+
+{{{
+
+gurugio@gurugio-laptop:/usr/src/linux-source-2.6.22-recompile$ readelf -S drivers/cdrom/cdrom.ko
+There are 46 section headers, starting at offset 0x29a40:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        00000000 000040 004ff4 00  AX  0   0 16
+  [ 2] .rel.text         REL             00000000 02a170 0013d8 08     44   1  4
+  [ 3] .exit.text        PROGBITS        00000000 005040 000024 00  AX  0   0 16
+  [ 4] .rel.exit.text    REL             00000000 02b548 000020 08     44   3  4
+  [ 5] .init.text        PROGBITS        00000000 005070 000008 00  AX  0   0 16
+  [ 6] .rel.init.text    REL             00000000 02b568 000008 08     44   5  4
+  [ 7] .rodata           PROGBITS        00000000 005078 0003b4 00   A  0   0  4
+  [ 8] .rel.rodata       REL             00000000 02b570 000768 08     44   7  4
+  [ 9] .rodata.str1.4    PROGBITS        00000000 00542c 000f04 01 AMS  0   0  4
+  [10] .rodata.str1.1    PROGBITS        00000000 006330 000336 01 AMS  0   0  1
+  [11] .modinfo          PROGBITS        00000000 006680 00012b 00   A  0   0 32
+  [12] __ksymtab         PROGBITS        00000000 0067ac 000060 00   A  0   0  4
+  [13] .rel__ksymtab     REL             00000000 02bcd8 0000c0 08     44  12  4
+  [14] __kcrctab         PROGBITS        00000000 00680c 000030 00   A  0   0  4
+  [15] .rel__kcrctab     REL             00000000 02bd98 000060 08     44  14  4
+  [16] __param           PROGBITS        00000000 00683c 000078 00   A  0   0  4
+  [17] .rel__param       REL             00000000 02bdf8 0000c0 08     44  16  4
+  [18] __ksymtab_strings PROGBITS        00000000 0068b4 0000d2 00   A  0   0  1
+  [19] __versions        PROGBITS        00000000 0069a0 000700 00   A  0   0 32
+  [20] .data             PROGBITS        00000000 0070a0 000274 00  WA  0   0 32
+  [21] .rel.data         REL             00000000 02beb8 0000b0 08     44  20  4
+  [22] .gnu.linkonce.thi PROGBITS        00000000 007380 000600 00  WA  0   0 128
+  [23] .rel.gnu.linkonce REL             00000000 02bf68 000010 08     44  22  4
+  [24] .bss              NOBITS          00000000 007980 000420 00  WA  0   0 32
+  [25] .comment          PROGBITS        00000000 007980 000082 00      0   0  1
+  [26] .debug_aranges    PROGBITS        00000000 007a02 000030 00      0   0  1
+  [27] .rel.debug_arange REL             00000000 02bf78 000020 08     44  26  4
+  [28] .debug_pubnames   PROGBITS        00000000 007a32 00016c 00      0   0  1
+  [29] .rel.debug_pubnam REL             00000000 02bf98 000010 08     44  28  4
+  [30] .debug_info       PROGBITS        00000000 007b9e 012bf6 00      0   0  1
+  [31] .rel.debug_info   REL             00000000 02bfa8 0081d0 08     44  30  4
+  [32] .debug_abbrev     PROGBITS        00000000 01a794 000774 00      0   0  1
+  [33] .debug_line       PROGBITS        00000000 01af08 001949 00      0   0  1
+  [34] .rel.debug_line   REL             00000000 034178 000018 08     44  33  4
+  [35] .debug_frame      PROGBITS        00000000 01c854 00064c 00      0   0  4
+  [36] .rel.debug_frame  REL             00000000 034190 000240 08     44  35  4
+  [37] .debug_str        PROGBITS        00000000 01cea0 008236 01  MS  0   0  1
+  [38] .debug_loc        PROGBITS        00000000 0250d6 003387 00      0   0  1
+  [39] .rel.debug_loc    REL             00000000 0343d0 003e50 08     44  38  4
+  [40] .debug_ranges     PROGBITS        00000000 02845d 001450 00      0   0  1
+  [41] .rel.debug_ranges REL             00000000 038220 002020 08     44  40  4
+  [42] .note.GNU-stack   PROGBITS        00000000 0298ad 000000 00      0   0  1
+  [43] .shstrtab         STRTAB          00000000 0298ad 000193 00      0   0  1
+  [44] .symtab           SYMTAB          00000000 03a240 000b70 10     45 129  4
+  [45] .strtab           STRTAB          00000000 03adb0 000c33 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings)
+  I (info), L (link order), G (group), x (unknown)
+  O (extra OS processing required) o (OS specific), p (processor specific)
+}}}
+
+{{{
+gurugio@gurugio-laptop:/usr/src/linux-source-2.6.22-recompile/drivers/cdrom$ readelf -s cdrom.ko | grep register_cdrom
+    98: 00000050     8 OBJECT  LOCAL  DEFAULT   12 __ksymtab_register_cdrom
+    99: 000000ac    15 OBJECT  LOCAL  DEFAULT   18 __kstrtab_register_cdrom
+   100: 00000028     4 OBJECT  LOCAL  DEFAULT   14 __kcrctab_register_cdrom
+   132: 00004ca0   653 FUNC    GLOBAL DEFAULT    1 register_cdrom
+   158: d8627a76     0 NOTYPE  GLOBAL DEFAULT  ABS __crc_unregister_cdrom
+   172: 00004f30   196 FUNC    GLOBAL DEFAULT    1 unregister_cdrom
+   175: 6f8cab2c     0 NOTYPE  GLOBAL DEFAULT  ABS __crc_register_cdrom
+}}}
+
+{{{
+gurugio@gurugio-laptop:/usr/src/linux-source-2.6.22-recompile/drivers/cdrom$ cat /proc/kallsyms | grep register_cdrom
+e08b7ca0 u register_cdrom       [sr_mod]
+e08b7f30 u unregister_cdrom     [sr_mod]
+e08b965c r __ksymtab_unregister_cdrom   [cdrom]
+e08b97b7 r __kstrtab_unregister_cdrom   [cdrom]
+e08b9698 r __kcrctab_unregister_cdrom   [cdrom]
+e08b9664 r __ksymtab_register_cdrom     [cdrom]
+e08b97c8 r __kstrtab_register_cdrom     [cdrom]
+e08b969c r __kcrctab_register_cdrom     [cdrom]
+e08b7ca0 T register_cdrom       [cdrom]
+24739812 a __crc_unregister_cdrom       [cdrom]
+e08b7f30 T unregister_cdrom     [cdrom]
+879e5506 a __crc_register_cdrom [cdrom]
+}}}
+
+
+= vmlinux.lds 분석 =
+
+
+드라이버 모듈에서 여러가지 섹션들에 정보들을 저장하는 것을 알 수 있었다. 그런데 이런 섹션 정보들은 드라이버를 컴파일하는 Makefile에서 지정하지 않는다. 드라이버를 컴파일하는 Makefile 에서는 단지 커널 소스의 경로만을 설정한다. 
+
+드라이버 모듈을 컴파일하기 위해서는 반드시 커널 소스가 있어야 한다. 그 이유중에 하나가 드라이버 모듈이 사용하는 섹션에 대한 정보를 커널 소스안에 있는 링커 스크립트 파일이 관리하기 때문이다. 예를 들어 i386 머신에서 동작하는 커널을 컴파일하는 링커 스크립트 파일은 arch/i386/kernel/vmlinux.lds.S 파일이다. 각 머신별로 존재하는데 이 파일들을 열어보면 __ksymtab, initcall6.init 등 커널 모듈에서 사용하는 섹션들의 영역을 확인할 수 있다.
+
+다음은 2.6.22 커널의 arch/i386/kernel/vmlinux.lds.S 파일의 일부분이다. 커널을 컴파일한 후라면 vmlinux.lds 파일이 생성되어 있는데 vmlinux.lds.S 파일에서 참조한 vmlinux.lds.h 파일 등의 헤더들을 프리프로세싱한 파일이므로 동일한 파일이다.
+
+{{{
+249   .initcall.init : AT(ADDR(.initcall.init) - 0xC0000000) {
+250    __initcall_start = .;
+251  *(.initcall0.init) *(.initcall0s.init) *(.initcall1.init) *(.initcall1s.init) *(.initcall2.init) *(.initcall2s.init) *(.initcall3.init) *(.initcall3s.in    it) *(.initcall4.init) *(.initcall4s.init) *(.initcall5.init) *(.initcall5s.init) *(.initcallrootfs.init) *(.initcall6.init) *(.initcall6s.init) *(.initc    all7.init) *(.initcall7s.init)
+252    __initcall_end = .;
+253   }
+
+...
+
+AT(ADDR(__ksymtab) - 0xC0000000) { __start___ksymtab = .; *(__ksymtab) __stop___ksymtab = .; }
+
+}}}
+
+
+
+
+
+

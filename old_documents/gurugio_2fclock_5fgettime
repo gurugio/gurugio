@@ -1,0 +1,97 @@
+''' 시스템 콜을 호출하는데 얼마나 시간이 걸릴까? '''
+
+시스템 콜을 호출하면 해당 시스템 콜에 진입하는 데까지, 즉
+유저 모드에서 커널 모드로 컨텍스트 스위칭을 하는데 시간이 얼마나 걸릴지 알고 싶어져서
+다음과 같은 프로그램을 만들어보았다.
+
+1. 응용 프로그램
+
+clocl_gettime 함수는 us 단위로 시간을 잴 수 있으므로 이 함수를 사용했다.
+
+2048바이트의 데이터를 드라이버로 넘겨서 전달하는 데이터 크기에 따라 시간이 차이가 날지
+실험해보았는데 스위칭 단계에서 유저 영역의 데이터를 처리하지 않으므로
+시간의 차이는 발생하지 않았다.
+
+{{{
+#include <stdio.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+
+char wr_data[2048];
+
+int main(void)
+{
+	struct timespec t1, t2;
+	int rs;
+	int fd;
+
+	fd = open("/dev/hello", O_RDWR);
+
+
+	rs = clock_gettime(CLOCK_REALTIME, &t1);
+
+	write(fd, wr_data, 2048);
+	
+
+
+	rs = clock_gettime(CLOCK_REALTIME, &t2);
+	printf("%ld: %ld\n", t1.tv_sec, t1.tv_nsec);
+	printf("%ld: %ld\n", t2.tv_sec, t2.tv_nsec);
+
+
+	return 0;
+}
+}}}
+
+
+2. 드라이버 코드 일부
+
+드라이버의 write 함수이다.
+
+어플리케이션에서 전달한 데이터를 메모리에 복사하는 시간을 재어봤다.
+
+clock_gettime 시스템 콜은 최종적으로 do_getimeofday를 호출하므로 
+드라이버에서는 clock_gettime을 사용할 필요가 없다.
+
+{{{
+	struct timeval x1, x2;
+	
+	do_gettimeofday(&x1);
+
+	memcpy(wr_buf, buf, count);
+
+	do_gettimeofday(&x2);
+
+	debug("# Device write # <%s:%d>\n", __FILE__, __LINE__);
+
+	debug("%d bytes written\n", count);
+	for (; ret < 5; ret++)
+		debug("%x ", wr_buf[ret]);
+	debug("\n");
+
+	debug("%ld:%ld\n", x1.tv_sec, x1.tv_usec);
+	debug("%ld:%ld\n", x2.tv_sec, x2.tv_usec);
+}}}
+
+
+3. 실험 결과
+
+do_gettimeofday가 실행되는 시간에 대해서도 고려하려면 jiffies 값을 읽는게
+정확하겠지만 일단 간단하게 만들기 위해 do_gettimeofday를 사용했다.
+
+실험 환경 : INTEL Core 2 6400 2.13HGz + VMware + Ubuntu + linux 2.6.17
+
+결과
+ - 시스템 콜 진입 시간 5~10us
+
+ - 1024바이트 복사 1~2us
+
+ - 2048바이트 복사 2~3us
+
+ - 유저 레벨 복귀 XX (커널 레벨에서 유저 레벨 복귀는 스케줄링이 실행되므로 실행 시간의 의미가 없다)
+
+''' 시스템 콜 진입 시간은 유저 프로그램이 넘기는 데이터에 무관하며 상당한 로드가 걸리는 작업임을 알 수 있었다 '''

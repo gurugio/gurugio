@@ -1,0 +1,315 @@
+'''64비트-SMP 커널 만들기 - 2장 부트로더'''
+
+
+----
+
+ * 작성자: 김기오 
+ 
+ * 문서 소개
+64비트-SMP 커널 만들기 강좌의 2장
+
+----
+
+ * 작성 일지
+
+2009.2.11 김기오: 2장 작성 시작
+2009.2.21 김기오: 1차 완성
+
+
+----
+
+[[TableOfContents]] 
+
+----
+
+= 부트로더 =
+
+
+부트 로더는 보통 하드 디스크의 MBR(Master Boot Record)에 저장되어 있다. MBR은 부트섹터라고도 불리며, 하드디스크의 물리적인 위치에서 가장 첫번째 섹터를 말하며 플로피 디스크로 부팅할때는 플로피 디스크의 가장 첫 섹터를 말하게 된다. 부트로더는 컴퓨터가 부팅된 직후에 아무 정보도 저장되어있지 않은 메모리에 운영체제의 시동을 위한 정보를 하드에서 읽어와서 메모리로 적재하는 일을 한다. 
+
+부트로더 개발을 위해 보다 정확하게 말하면 바이오스가 자동으로 부팅 장치의 첫 섹터를 읽어서 메모리에 저장해준다. 바이오스 설정 화면에서 부팅 순서를 설정하는 것이 어느 장치의 부트로더를 찾을 것인지를 설정하는 것이다. 부트로더를 메모리에 저장한 후에는 IP 레지스터의 값을 부트로더의 시작 지점으로 설정한다. 이때부터 부트로더가 실행되는 것이다. 
+
+보통 리눅스에서 사용하는 LILO나 GRUB, WINDOWS 2000에서 사용하는 NT loader 등을 부트로더라고 말한다. 그런데 일반적으로 사용자의 눈에 보이는 부트로더는 다양한 일을 하기 때문에 하나의 섹터(플로피 디스크의 경우 512바이트)에 저장되지 않는다. 따라서 일반적으로 부트 섹터에 저장된 1차 부트로더와 커널을 로드하거나 프로세서를 초기화하는 2차 부트로더로 나누어서 개발한다. 어떤 이들은 1차 부트로더를 부트스트랩 코드라고 부르고 2차 부트로더를 커널 로더 등의 이름으로 부르기도 한다.
+
+이번 장에서는 부트 섹터에 저장되는 1차 부트로더를 만들어보고 부트로더 이미지를 Qemu에서 부팅하면서 Qemu의 사용방법을 익혀본다.
+
+
+== 1차 부트로더 구현 ==
+
+1차 부트로더는 부트 섹터에 저장될 수 있도록 512바이트보다 작아야 한다. 코드를 작게 해야 하는 만큼 하는 일도 단순해야 한다. 다음 5가지가 1차 부트로더의 역할이다.
+
+1. CS 세그먼트 레지스터와 IP 레지스터의 주소 값 설정
+2. setup.asm를 어셈블한 이미지를 플로피 이미지로부터 읽어서 메모리 0x900:0 위치에 저장
+3. 커널 이미지를 플로피 이미지로부터 읽어서 메모리 0xA00:0 위치에 저장
+4. A20 라인 활성화
+5. 0x0:0x9000 위치로 점프 -> setup.asm의 코드가 실행됨
+
+컴퓨터가 처음 켜지고 가장 먼저 실행되는 것은 바이오스 프로그램이다. 사용자가 봤을 때는 바이오스를 만든 회사의 로고가 잠깐 켜지고 메모리 테스트를 하는 것으로 보이지만 사실 바이오스는 컴퓨터에 장착된 PCI 카드나 메모리의 종류나 크기, 프로세서의 종류 등등 모든 하드웨어를 체크하고 인식하는 일을 한다. 그리고 자신이 알아낸 정보를 메모리에 써놓아서 커널이 자신이 실행된 하드웨어 사양을 알 수 있도록 해준다. 사실 굉장히 하는 일이 많기 때문에 그만큼 만들기도 힘든게 바이오스 프로그램이다. 
+
+일단 지금 부트로더를 만들기 위해서는 바이오스 프로그램의 동작보다는 바이오스의 동작이 끝난 후 상황을 알아야 한다. 바이오스 프로그램은 컴퓨터의 하드웨어에 대한 처리를 완료한 후 사용자가 부팅장치로 선택한 장치의 첫번째 섹터를 읽어서 메모리에 저장한다. 그리고 메모리에 저장된 부트로더 코드를 실행시킨다. 부트로더를 실행시킨다는 것은 정확하게 말하면 CS:IP 레지스터를 부트로더가 저장된 메모리 위치의 주소로 설정한다는 것이다. 그런데 바이오스에 따라서 CS:IP 레지스터의 값이 일정하지 않기 때문에 약간의 문제가 생긴다. 부트로더가 저장되는 메모리의 물리 주소는 0x7C00 으로 항상 동일하지만 CS:IP 레지스터의 값은 0x7C0:0x0 이 될수도 있고, 0x0:0x7C00 이 될 수도 있는 등 확실한 규약이 없다. 따라서 부트로더는 가장 먼저 CS:IP 값을 자신이 원하는 값으로 설정해야 한다. 현재 CaOS의 부트로더 코드에서는 jmp 0x7C0:0 명령으로 세그먼트 주소를 0x7C0 으로 맞추고 오프셋 주소를 0x0으로 설정한다. 그리고 다른 세그먼트 레지스터들도 모두 0x7C0 으로 값을 통일해서 사용한다. 
+
+이렇게 세그먼트 값을 0x7C0 으로 통일하고, 오프셋 값을 0으로 맞추는 것은 부트로더의 첫 줄에 있는 [org 0x0] 지시어때문이다. org 라는 지시어는 이 프로그램의 시작 주소를 어셈블러에게 알려줘서 모든 데이터에 접근할 때 오프셋 주소를 프로그램의 시작 주소에 맞춰서 계산하도록 하는 명령어이다. 부트로더 코드에서 프로그램의 시작 주소를 0x0으로 설정했으므로 boot_drv라는 변수에 접근하기 위해서는 jmp 0x7C0:0 명령의 길이가 곧 boot_drv 변수의 오프셋 주소가 된다. 예를 들어 jmp 0x7C0:0 명령의 길이가 4바이트라면 boot_drv 변수의 오프셋 주소는 4가 되고, 세그먼트 주소에 따라서 boot_drv 변수가 저장된 물리 주소에 접근하게 되는 것이다. 부트로더가 물리 주소 0x7C00 에 저장되므로 boot_drv 변수는 물리 주소 0x7C04 가 될 것이고, 오프셋 주소가 4 라면 세그먼트 주소는 0x7C0 이 되야 한다. 결론은 [org 0x0] 이라는 지시어 때문에 세그먼트 주소를 0x7C0 으로 통일하게 되는 것이다. 만약 [org 0x7C00] 이라고 설정하면 세그먼트 주소를 0x0 으로 통일해야 어셈블러가 자동으로 boot_drv 변수의 오프셋 주소를 0x7C04 로 계산해서 코드를 만들어준다.
+
+a20.inc 파일은 프로세서의 주소 핀 중에서 20번 주소 핀을 사용가능하도록 설정하는 코드이다. A20 핀에 대한 설정에 대해 따로 이해할 것은 없다. 단지 보호모드로 전환하기 위해서 필요한 코드라는 것만 이해하면 될것 같다. A20 핀에 대한 배경 지식은 위키피디아 페이지 http://en.wikipedia.org/wiki/A20_line를 참고하고, 프로그래밍에 대한 예제는 OSDEV 사이트의 http://wiki.osdev.org/A20 페이지를 참고한다. 필요하긴 하지만 큰 의미가 있는 코드가 아니므로 굳이 코드를 이해할 필요는 없고 그냥 라이브러리같이 가져다 쓰기만 하면 된다.
+
+또한 부트로더 코드에 반드시 넣어야 할 것이 있는데 부트로더가 저장되는 섹터의 마지막에 0x55AA 라는 값이 저장되야 한다. 시스템에 여러개의 부팅 장치가 있을 때, 즉 여러개의 하드디스크와 플로피 드라이브 등이 있을 때 어느 장치로 부팅해야 할지를 알아낼 수 있는 규약이 바로 이 0x55AA 값이다. 이 값을 감지해서 이 값이 있는 부트섹터를 읽어서 실행하는 것이다. 아무런 코드도 넣지 않고 단지 이 값만 저장해놓아도 바이오스는 부트섹터로 인식해서 코드를 수행할 것이다. 리틀엔디안을 감안해서 소스 코드에 0xAA55라는 변수를 만들어주면 된다. 부트로더의 끝에 times 510-($-$$) db 0 이라는 변수 선언이 있다. $는 프로그램의 끝 지점주소를 말하고 $$는 프로그램의 시작 지점 주소를 말한다. 따라서 ($-$$)는 프로그램의 크기가 되고 510-($-$$)는 512바이트의 섹터에서 프로그램 코드가 써지는 부분을 제외한 나머지 공간의 크기가 된다. 이 공간을 0으로 채우기 위해서 이런 변수 선언을 한다. 물론 마지막에 0xAA55 값을 쓰기 위해 512로 계산하지 않고 510으로 계산해야 한다.
+
+여기까지가 부트로더에 반드시 필요한 요소이다. 아무런 일도 하지 않는 부트로더 코드를 만들어보면 다음과 같다. 이 부트로더 코드만 가지고 에물레이터나 플로피 디스크로 부팅하면 바이오스는 부팅 장치가 없다는 불평을 하지 않고 우리가 만든 부트로더를 실행할 것이다.
+
+
+
+
+ * bootsect.asm
+{{{
+
+[org 0x0]
+
+[org 0x0]
+
+
+
+BOOT_SEG	equ 0x7c0
+
+
+	jmp BOOT_SEG:start
+
+
+; define routines for A20 line activation
+%include "a20.inc"
+
+start:
+	mov ax, cs
+	mov ds, ax		; ds=es=0x7c0
+	mov es, ax
+
+	mov ss, ax		; stack: 0x7c0:0 -> low memory
+	mov sp, 0x0
+
+
+	mov ax, 0xb800
+	mov es, ax
+	mov bx, 0x0
+	mov al, 'C'
+	mov byte [es:bx], al
+
+	jmp $				; stay here!
+
+
+times 510-($-$$) db 0
+	dw 0xaa55
+
+}}}
+
+
+
+A20 핀을 설정한 후에는 바이오스 인터럽트 0x13, 2번 서비스를 이용해서 플로피 디스크에 저장된 setup.img 파일과 커널 이미지를 읽어온다. 0x13-2 인터럽트는 레지스터에 읽고자하는 섹터의 갯수와 헤드번호, 드라이버 등을 지정하면 해당 섹터를 읽어주는 일을 한다. 각 레지스터에 대한 설정은 코드 주석으로 표시했으므로 여기에 맞게 값을 써주기만 하면 된다. 문제는 플로피 디스크의 섹터 번호는 연속적이지 않다는 것이다. 프로그램에서는 단지 몇번 섹터부터 몇번 섹터까지를 읽도록 계산하지만 물리적으로는 0번 섹터는 0번 헤드 (디스크의 윗면), 1번 섹터는 1번 헤드 (디스크의 뒷면), 2번 섹터는 0번 헤드와 같이 위아랫면에 번갈아 써진다. 또 여러개의 섹터가 하나의 트랙을 이루고 있으므로 하나의 섹터를 읽을 때마다 트랙 번호, 트랙 안에서의 섹터 번호, 헤드 번호, 3가지를 계산해야 한다. 따라서 섹터 읽는 프로시저를 2단계로 나누었다. 트랙이나 헤드에 대한 고려가 없이 섹터의 순서만 생각한 논리적인 섹터 번호를 가지고 여러개의 섹터를 읽는 프로시저 read_sectors가 있고, read_sectors는 한개의 섹터를 읽는 프로시저 read_one_sect로 나눠서 처리한다. 플로피 디스크에 저장되는 이미지는 부트로더와 setup.img, 커널 이미지가 순서대로 합쳐지므로 복잡한 파일시스템이 없어도 순서대로 섹터 갯수를 맞춰서 읽으면 원하는 이미지를 읽을 수 있다.
+
+이미지를 다 읽었으면 부트로더가 잘 실행되고 있는지를 알 수 있도록 화면에 C 라는 문자를 출력한다. 비디오 메모리의 첫 워드에 문자를 쓰면 된다. 비디오 메모리에서 하나의 문자를 출력하기 위해서는 1바이트의 아스키 코드 값과 1바이트의 문자 색깔 값을 써주면 된다. 아래 코드에서는 아스키 코드만을 써주고 문자 색을 쓰지 않아서 부팅된 상태 그대로의 색을 유지한다.
+
+마지막으로 setup.img 이미지로 점프하면 setup.asm 파일의 코드가 실행되면서 1차 부트로더의 역할이 끝나고 2차 부트로더가 시작된다. 2차 부트로더는 롱모드로 진입하는 역할을 하므로 중요한 주제이기 때문에 따로 하나의 챕터로 소개한다.
+
+다음 소스 파일은 모든 기능이 다 구현된 부트로더이다. 아직 2차 부트로더와 커널 이미지가 구현되지 않았으므로 컴파일도 되지 않고 실행할 수도 없지만 전체적으로 동작하는 방식을 이해할 수 있도록 첨부한다.
+
+ * bootsect.asm
+{{{
+
+;====================================================
+; DESCRIPTION: 1. load setup.asm at 0x9000
+;              2. load kernel at 0x9200
+; FILE NAME: bootsect.asm
+;====================================================
+
+
+[org 0x0]
+
+
+SETUP_SECT	equ 8 ; sutup.img size is 4096 (8 sectors)
+KERNEL_SECT	equ KERNEL_SIZE	
+
+BOOT_SEG	equ 0x7c0
+SETUP_SEG	equ 0x900
+
+; Kernel is copied to 0xA000 at first,
+; and to 0x100000 in setup.asm
+KERNEL_SEG	equ 0xA00
+
+SETUP_ADDR	equ 0x9000
+
+
+	jmp BOOT_SEG:start
+
+boot_drv		db 0	; floppy drive A:
+sect_per_track	dw 18	; sectors per one track
+head_per_drv	dw 2	; floppy has 2 heads
+current_sect	dw 1	; current reading sector # (relative)
+read_sect		db 0	; it read how many sectors
+
+; define routines for A20 line activation
+%include "a20.inc"
+
+start:
+	mov ax, cs
+	mov ds, ax		; ds=es=0x7c0
+	mov es, ax
+
+	mov ss, ax		; stack: 0x7c0:0 -> low memory
+	mov sp, 0x0
+
+	mov [boot_drv], dl	; bios store drive number in dl
+
+
+	mov ax, SETUP_SEG	; read image of setup.asm
+	mov es, ax
+	mov si, 0			; store image at es:si=0x900:0
+	mov cx, SETUP_SECT	; how many sectors?
+	call read_sectors
+
+	mov ax, KERNEL_SEG
+	mov es, ax
+	mov si, 0
+	mov cx, KERNEL_SECT
+	call read_sectors
+
+	call a20_try_loop	; activate A20 line
+
+
+	mov ax, 0xb800
+	mov es, ax
+	mov bx, 0x0
+	mov al, byte [hello_msg]	; Greeting!
+	mov byte [es:bx], al
+	
+	
+	mov ax, KERNEL_SECT
+
+	;==========================================
+	; segment addres = 0x0
+	; offset = 0x9000
+	; Segment must be 0x0000.
+	;==========================================
+	jmp 0x0:SETUP_ADDR	; execute setup
+
+
+	jmp $				; or die!
+
+; es: segment address
+; cx: sector count
+read_sectors:
+	push cx
+	call read_one_sect		; load one sector
+	pop cx
+
+	add si, 512				; offset for next sector
+	dec cx					; next sector
+	
+	or cx, cx
+	jz _read_sectors
+
+	jmp read_sectors
+_read_sectors:
+	ret
+
+
+
+read_one_sect:
+	; relative sector # (ax) / sectors per one track (di)
+	; = relative track # (ax), absolute sector # in track (dx)
+	mov ax, [current_sect]
+	mov di, [sect_per_track]
+	xor dx, dx
+	div di
+
+	; sector # is 1-based count
+	inc dl
+	mov byte [read_sect], dl
+
+	; relative track # (ax) / headers count
+	; = absolute track # (ax), head number (dx)
+	xor dx, dx
+	div word [head_per_drv]
+
+	mov ch, al			; track(cylinder) #
+	mov cl, [read_sect]	; sector #
+	mov ah, 2			; service #
+	mov al, 1			; sector count
+	mov dh, dl			; head #
+	mov dl, [boot_drv]	; floppy
+	mov bx, si			; offset
+	int 0x13
+
+	; next sector to be read
+	inc byte [current_sect]
+
+	ret
+
+
+hello_msg	db "C"
+
+times 510-($-$$) db 0
+	dw 0xaa55
+
+
+
+
+}}}
+
+
+
+== 부트로더를 컴파일하기 위한 Makefile 작성 ==
+
+부트로더를 컴파일하기 위해서 nasm을 사용한다. 그 외에 다른 개발툴은 아직 필요하지 않다. 아래에 Makefile 파일을 첨부한다.
+
+
+ * Makefile
+{{{
+# How to compile 64bit kernel refers to http://wiki.osdev.org/Creating_a_64-bit_kernel
+# and the other options refer gcc manual & http://www.osx86.org
+
+BOOT_SRCS = bootsect.asm
+BOOT_IMG = boot.img
+
+all:$(BOOT_IMG)
+	cat $(BOOT_IMG) > floppy.img
+
+$(BOOT_IMG):$(BOOT_SRCS)
+	nasm -o bootsect.img bootsect.asm
+	cat bootsect.img > $@
+
+clean:
+	rm -f *.o *.img *.tmp *.txt *.map
+
+}}}
+
+
+Makefile의 기본 문법을 안다면 그다지 어렵지 않게 이해할 수 있다. 다음 순서대로 빌드가 이루어진다.
+
+1. bootsect.asm 을 바이너리 이미지로 빌드: nasm -o bootsect.img bootsect.asm
+2. bootsect.img 이미지를 BOOT_IMG 이미지로 병합: 추후 2차 부트로더가 만들어지면 2개의 부트로더를 합치게 됨
+3. BOOT_IMG 가 생성되면 floppy.img 파일로 병합: 부트로더와 커널 이미지를 모두 병합한 최종 이미지가 flopp.img 파일이다.
+
+2개의 부트로더와 커널 이미지를 처리하기 위해 지금은 불필요한 처리가 있지만 전체적인 빌드 단계를 이해하기 위해 이렇게 만들었다. 앞으로 이 Makefile 소스에 조금씩 소스 파일을 추가하면서 진행하게 된다. 
+== Qemu상에서 부트로더 실행 ==
+
+qemu를 이용해서 부트로더를 실행한다. 각자 자신이 만든 환경에서 qemu를 실행하면 되는데 예를 들면 윈도우에서 다음과 같은 내용으로 run.bat 를 만들어 사용하면 된다. 여기에서는 현재 부트로더가 있는 디렉토리의 상위에 qemu-20080810-windows 라는 디렉토리가 있는 것으로 가정한다.
+
+ * run.bat
+{{{
+echo This is 1st bootloader!
+..\qemu-20080810-windows\qemu-system-x86_64.exe -L ..\qemu-20080810-windows\ -m 128 -fda floppy.img -boot a -smp 2
+}}}
+
+qemu에 다음 옵션들이 사용되었다.
+
+1. -L ..\qemu-20080810-windows\ : 바이오스 파일은 qemu의 실행 파일이 있는 디렉토리에 함께 있음
+2. -m 128 : 물리 메모리 크기를 128MB로 설정
+3. -fda floppy.img : 플로피 디스크의 이미지 파일
+4. -boot a : a는 플로피 드라이브를 지정함
+5. -smp 2 : 프로세서가 2개있는 SMP 환경으로 설정
+
+이와 비슷하게 부팅 이미지의 경로나 qemu 실행 파일의 경로를 설정해서 스크립트 파일을 만들어 사용하면 편리하다.
+== 참고 자료 ==
+
+ * http://wiki.osdev.org/Bootloader
+ * http://asmlove.co.kr/wiki/wiki.php/gurugio/bootloader
+----
+어셈블하면 KERNEL_SIZE가 정의되잇지 않다고 나옵니다. -- LKY [[Date(2010-01-30T17:11:10)]]

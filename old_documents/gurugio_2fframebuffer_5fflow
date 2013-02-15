@@ -1,0 +1,41 @@
+
+1. LCD 하드웨어 초기화
+
+- 프로세서에 내장된 LCD 컨트롤러의 초기화
+
+struct platform_device pxa_device_lcd 같은 형태로 LCD 컨트롤러의 플랫폼 설정을 한다.
+platform_device 구조체에는 장치의 이름, ID, 리소스 정보등이 저장되고 보드가 부팅될 때
+platform_device 로 정의된 장치들이 가장 먼저 인식된다.
+
+platform_device 구조체 안에는 struct resource 구조체가 있다.
+struct resource 구조체는 LCD 컨트롤러의 레지스터가 맵핑된 영역의 물리 메모리와 LCD 컨트롤러의 인터럽트 번호 등을 설정한다.
+
+
+- 프로세서에 연결된 LCD 장치의 정보
+
+LCD 장치의 동작에 관한 정보는 pxa/pxafb_mach_info 구조체같은 형태로 LCD의 동작 타이밍, LCD 컨트롤 레지스터 정보,
+가로세로 크기 등에 대한 정보를 저장한다.
+
+드라이버에 따라 구조체의 이름은 다를 수 있지만 저장되는 정보는 유사하다.
+
+
+
+2. 프레임버퍼 드라이버 등록 
+
+보드가 부팅되면서 register_framebuffer 함수 (driver/video/fbmem.c)를 호출한다.
+register_framebuffer 함수는 struct fb_info 구조체를 인자로 받아서 호출된다. fb_info 구조체는 보드 초기화에서 등록한
+platform_device 구조체 정보와 드라이버가 직접 설정하는 정보 등이 저장된다.
+
+3. 프레임버퍼 드라이버 사용
+
+driver/video/fbmem.c 파일에는 struct file_operations fb_fops 구조체가 있어서
+프레임 버퍼의 파일 연산을 정의한다.
+
+fb_ioctl 함수는 모든 프레임버퍼 장치에 공통적인 명령어를 처리하고 있고
+그 외에 플랫폼에 따라 고유한 명령어를 처리하기 위해 swich 문에서 default: 에서
+fb->fb_ioctl() 함수를 호출한다. 
+
+fb->fb_ioctl() 함수가 drivers/video 디렉토리에 있는 LCD 장치나 비디오 카드의 드라이버의
+ioctl 함수를 호출하게 된다.
+
+

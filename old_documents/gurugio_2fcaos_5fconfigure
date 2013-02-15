@@ -1,0 +1,174 @@
+'''CaOS 빌드를 위한 configure 생성'''
+
+
+
+
+'''''이 문서는 작업 중입니다.'''''
+2009.8.11 작성 시작
+
+
+attachment:gio_docu/caos_configure_exam.tgz
+
+
+= autotools를 이용해서 CaOS 빌드 환경 설정 =
+
+CaOS를 빌드하기 위해서는 64비트용 컴파일러와 binutils, NASM 2.x 버전이 필요하다. 필요한 프로그램이 제대로 설치되어 있는지 확인하고, CaOS의 빌드 과정을 현재 호스트 플랫폼의 환경에 맞추는 일을 하는 configure 개발이 필요하다.
+
+
+
+= 실행방법 =
+
+ 1. aclocal
+ 1. autoconf
+ 1. automake --add-missing
+ 1. ./configure
+ 1. make
+
+{{{
+gio-desk:tmp$ aclocal
+gio-desk:tmp$ autoconf
+gio-desk:tmp$ automake --add-missing
+configure.in:48: installing `./config.guess'
+configure.in:48: installing `./config.sub'
+configure.in:4: installing `./install-sh'
+configure.in:4: installing `./missing'
+automake: no `Makefile.am' found for any configure output
+gio-desk:tmp$ ./configure
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether build environment is sane... yes
+checking for a thread-safe mkdir -p... /bin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking for gawk... (cached) gawk
+checking for nasm... /usr/bin/nasm
+checking whether NASM version >= 2.0 for 64bit assembly... configure: nasm version is below than 2.0
+checking build system type... x86_64-unknown-linux-gnu
+checking host system type... x86_64-unknown-linux-gnu
+x86_64-unknown-linux-gnu
+
+configure: creating ./config.status
+config.status: creating config.mk
+config.status: creating platform.h
+gio-desk:tmp$ make
+HOST=x86_64-unknown-linux-gnu
+CPU=X86_64
+}}}
+
+
+= configure.in 작성 =
+
+
+{{{
+dnl # Initialize configure
+
+AC_INIT([./configure])
+AM_INIT_AUTOMAKE(CaOS, 1.0)
+
+dnl # Check required autoconf version
+
+AC_PREREQ([2.13])
+
+dnl # platform output file
+AC_CONFIG_HEADER([platform.h])
+
+
+dnl # tools
+
+
+
+dnl # gawk
+AC_PROG_AWK
+
+
+dnl # nasm install check
+AC_PATH_PROG([NASM], [nasm])
+
+if test -z "$NASM"; then
+    AC_MSG_ERROR([Cannot find Netwide Assembler])
+fi
+
+AC_SUBST(NASM)
+
+dnl # nasm version check
+${NASM} -v | grep version > nasm_version.tmp
+
+AC_MSG_CHECKING([whether NASM version >= 2.0 for 64bit assembly])
+
+result=`cat nasm_version.tmp | awk '{print $3}'`
+nasm_major=`echo $result | awk -F . '{print $1}'`
+
+if test $nasm_major -lt 2; then
+    AC_MSG_NOTICE([nasm version is below than 2.0])
+fi
+
+rm -f nasm_version.tmp
+
+
+dnl # host
+
+AC_CANONICAL_HOST()
+
+CAOS_CFG_CPU=UNKNOWN
+CAOS_CFG_MAJOR_VER=0
+CAOS_CFG_MINOR_VER=0
+
+echo "${host}"
+echo "${target}"
+
+case "${host}" in
+    i[3456]86-* )
+        CAOS_CFG_CPU=i386
+        ;;
+    amd64-*-* )
+        CAOS_CFG_CPU=AMD64
+        ;;
+    x86_64-* )
+        CAOS_CFG_CPU=X86_64
+        ;;
+esac
+
+
+
+AC_DEFINE_UNQUOTED(CAOS_CFG_CPU_$CAOS_CFG_CPU, 1)
+AC_DEFINE_UNQUOTED(CAOS_CFG_CPU, "$CAOS_CFG_CPU")
+AC_SUBST(CAOS_CFG_CPU)
+
+AC_OUTPUT([config.mk])
+
+
+dnl # remove temporary files
+rm -f ./config.cache ./config.log ./config.status
+}}}
+= platform.h.in 작성 =
+
+
+{{{
+#undef CAOS_CFG_CPU_X86_64
+#undef CAOS_CFG_CPU_i386
+#undef CAOS_CFG_CPU_AMD64
+#undef CAOS_CFG_CPU
+}}}
+
+
+= config.mk.in =
+
+
+{{{
+HOST=@host@
+CPU=@CAOS_CFG_CPU@
+}}}
+
+
+= Makefile =
+
+
+
+
+{{{
+include config.mk
+
+all:
+	@echo HOST=$(HOST)
+	@echo CPU=$(CPU)
+
+}}}

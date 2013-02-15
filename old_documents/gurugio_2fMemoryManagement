@@ -1,0 +1,7 @@
+리눅스에서 메모리 관리를 위해 사용하는 버디/슬랩 알고리즘 분석 문서
+
+
+ * 학부 졸업 논문 본문 : attachment:understanding_buddy_slab.pdf
+
+ * 주요 함수만 정리함 : attachment:buddyslab_main_functions.pdf 
+

@@ -1,0 +1,79 @@
+'''64비트-SMP 커널 만들기 - AP 활성화'''
+
+----
+
+ * 작성자: 김기오 
+ 
+ * 문서 소개
+64비트-SMP 커널 만들기 강좌의 11장
+
+----
+
+ * 작성 일지
+
+2009.4.1 김기오: 작성 시작
+
+
+----
+
+[[TableOfContents]] 
+
+----
+
+= AP 활성화 =
+
+
+시스템이 부팅한 후에는 BSP가 실행된다. BSP에서 실행되는 커널은 일정한 프로토콜에 따라 다른 프로세서들을 깨워야한다. 인텔 프로세서의 Intel 64 and IA-32 Architectures Software Developer's Manual의 Volumn 3A:System Programming Guide Part 1의 7.5.4 MP Initialization Example 챕터에는 BSP가 부팅된 후 어떤 순서로 어떤 일을 해야하는지 그리고 어떻게 AP를 깨울 수 있는지 자세한 설명이 나와있다. 이 설명을 바탕으로 AP를 깨우는 wake_ap() 함수를 작성했다.
+
+smp.c 파일의 wake_ap() 함수는 BSP외의 모든 프로세서에게 IPI (Inter-Processor Interrupt)를 전송해서 각 프로세서들이 정해진 메모리 번지에 있는 코드를 실행하도록 한다. 이때 프로세서가 깨어나는 순서는 알 수 없다.
+
+대략 다음 순서로 실행된다.
+
+ * INIT IPI 전송
+ * 10ms 대기
+ * STARTUP IPI (SPIP) 전송
+ * 200us 대기
+ * STARTUP IPI (SPIP) 전송
+ * 200us 대기
+
+ICR 레지스터의 12번 비트를 읽어서 0이면 IPI의 전송이 완료된 상태이고, 1이면 전송 중이거나 전송이 완료되지 못한 상태임을 알 수 있다.
+
+{{{
+ 55     apic_write(APIC_ICR, APIC_DEST_ALLBUT|APIC_INT_ASSERT|APIC_DM_INIT);
+ 56
+ 57
+ 58     // 10ms delay
+ 59     delay(1000000);
+ 60     delay(1000000);
+ 61
+ 62     // delivery mode = 111:STARTUP
+ 63     // Because base address of AP initialization code is 0x9000 (setup.asm)
+ 64     // vector is 0x9
+ 65     apic_write(APIC_ICR, APIC_DEST_ALLBUT|APIC_INT_ASSERT|APIC_DM_STARTUP|(A    P_INIT_ADDRESS>>12));
+ 66
+ 67     // 100us delay
+ 68     delay(1000000);
+ 69
+ 70
+ 71     // delivery mode = 111:STARTUP
+ 72     apic_write(APIC_ICR, APIC_DEST_ALLBUT|APIC_INT_ASSERT|APIC_DM_STARTUP|(A    P_INIT_ADDRESS>>12));
+ 73
+ 74     // 100us delay
+ 75     delay(1000000);
+ 76
+ 77
+ 78     // signal sent?
+ 79     if ((apic_read(APIC_ICR) & APIC_ICR_BUSY) != 0) {
+ 80         caos_printf("AP-WAKENING FAIL!\n");
+ 81         halt();
+ 82     }
+}}}
+
+
+== 참고 자료 ==
+
+ * Intel Multiprocessor Specification v1.4, May, 1997
+ * http://nerd.egloos.com/2954163
+
+
+

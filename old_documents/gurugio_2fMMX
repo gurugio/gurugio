@@ -1,0 +1,730 @@
+{{{
+ 
+
+#ifndef __MMX_UTIL_H__1321321
+#define __MMX_UTIL_H__1321321
+
+
+#include <memory.h>
+
+/****************************************************************
+* mmx_FastCopy                                               
+* return: none                                               
+* pDst: Destination buffer that must be allocated           
+* pSrc: Source buffer that will be copy
+* cbSize: Byte count size
+* programed by yensik, March 2001     
+****************************************************************/                                   
+inline void mmx_FastCopy(void* pDst, const void* pSrc, int cbSize)
+{
+       
+        unsigned char* pmm2=(unsigned char*)pDst;
+        unsigned char* pmm1=(unsigned char*)pSrc;
+        int pmm3 = cbSize/8;
+        int remain = cbSize%8;
+               
+                __asm
+                {
+                        push edi
+                        push ebx
+                        push ecx
+       
+                        mov edi, pmm3
+                        mov ebx, pmm1
+                        mov ecx, pmm2
+
+                Aloop:                                               
+                        movq   mm0, [ebx]                       
+                        movq   [ecx], mm0                       
+                        add    ecx, 8                             
+                        add    ebx, 8                         
+                        sub    edi, 1                             
+                        jne    Aloop
+       
+                        pop ecx
+                        pop ebx
+                        pop edi
+                        emms                         
+                };
+
+                if(remain)
+                {
+                        memcpy(pmm2+pmm3*8,pmm1+pmm3*8,remain);
+                }
+}
+/****************************************************************
+* mmx_FastCopy8                                               
+* return: none                                               
+* pDst: Destination buffer that must be allocated           
+* pSrc: Source buffer that will be copy
+* cbSize: Byte count size that must be multiple of 8
+* programed by yensik, March 2001     
+****************************************************************/                                   
+inline void mmx_FastCopy8(void* pDst, const void* pSrc, int cbSize)
+{
+       
+        unsigned char* pmm2=(unsigned char*)pDst;
+        unsigned char* pmm1=(unsigned char*)pSrc;
+        int pmm3 = cbSize/8;
+       
+                __asm
+                {
+                        push edi
+                        push ebx
+                        push ecx
+       
+                        mov edi, pmm3
+                        mov ebx, pmm1
+                        mov ecx, pmm2
+
+                Aloop:                                               
+                        movq   mm0, [ebx]                       
+                        movq   [ecx], mm0                       
+                        add    ecx, 8                             
+                        add    ebx, 8                         
+                        sub    edi, 1                             
+                        jne    Aloop
+       
+                        pop ecx
+                        pop ebx
+                        pop edi
+                        emms                         
+                };
+}
+
+/****************************************************************
+* mmx_IsValid:detecting support for MMX Technology using the
+               CPUID instruction                                               
+* return: if enable mmx, TRUE. else FALSE                                               
+* programed by yensik, March 2001     
+****************************************************************/
+BOOL mmx_IsValid()
+{
+       
+        int* pmm1;
+       
+        __asm
+        {
+                push eax
+                push ebx
+
+                mov ebx, pmm1       
+               
+                mov [ebx],0
+                mov eax,1
+                CUPID
+                test EDX, 00800000h
+                jnz found
+
+                mov [ebx],1
+               
+        found:
+       
+                pop eax
+                pop ebx
+        }
+
+        if(*pmm1) return FALSE;                /*did not detect mmx_CPU*/
+        return TRUE;           /*MMX_technology detected*/
+}
+       
+#endif /*__MMX_UTIL_H__1321321*/ 
+
+}}}
+
+
+
+{{{
+ .686
+
+.mmx
+
+.model flat, stdcall
+
+option casemap:none
+
+
+
+
+
+include c:\masm32\include\windows.inc
+
+include \masm32\include\gdi32.inc
+
+include \masm32\include\user32.inc
+
+include \masm32\include\kernel32.inc
+
+
+
+
+
+includelib \masm32\lib\gdi32.lib
+
+includelib \masm32\lib\user32.lib
+
+includelib \masm32\lib\kernel32.lib
+
+
+
+
+
+MainProc      proto
+
+Resize      proto      :dword, :dword,:dword,:dword,:dword
+
+ComputeOnePixel      proto      :dword, :dword,:dword,:dword,:dword
+
+
+
+StrLen       PROTO       :DWORD
+
+StdOut       proto      :dword
+
+
+
+
+
+
+
+
+
+.data
+
+   format1      byte         "%d * %d + %d", 13, 10, 0
+
+   format2      byte         "##row : %d  column : %d ##", 13, 10, 0
+
+   FileName      byte         "test.bin", 0
+
+   FileNameb   byte         "result.bin", 0
+
+
+
+.data?
+
+   i         dword      ?
+
+   row_out      dword      ?
+
+   col_out      dword      ?
+
+
+
+   row         dword      ?
+
+   col         dword      ?
+
+   iwidth      dword      ?
+
+   height      dword      ?
+
+   ratio         dword      ?
+
+   
+
+   source      byte          786432 dup (?)
+
+   dest         byte          3072 dup (?)
+
+
+
+   buffer      byte         128 dup (?)
+
+   strFile      OFSTRUCT   {}
+
+   hFile         dword      ?
+
+   
+
+   iReadByte      dword      ?
+
+   
+
+.code
+
+
+
+start:
+
+
+
+   MainProc      proc
+
+      ;pusha
+
+   
+
+      invoke OpenFile, addr FileName, addr strFile, OF_READ
+
+      mov hFile, eax
+
+      
+
+      invoke ReadFile, eax, addr source, 786432, addr iReadByte, NULL
+
+      invoke CloseHandle, hFile
+
+      
+
+      
+
+      
+
+      mov iwidth, 1024
+
+      mov height, 768
+
+      mov ratio, 16
+
+      
+
+      invoke Resize, addr source, addr dest, iwidth, height, ratio
+
+
+
+
+
+      invoke OpenFile, addr FileNameb, addr strFile, OF_CREATE or OF_WRITE
+
+      ;mov hFile, eax
+
+      
+
+      ;invoke WriteFile, hFile, addr dest, 3072, addr iReadByte, NULL
+
+
+
+      push eax
+
+      invoke WriteFile, eax, addr dest, 3072, addr iReadByte, NULL
+
+      
+
+      pop eax
+
+      invoke CloseHandle, eax
+
+      
+
+      ;popa
+
+      ret
+
+   MainProc      endp
+
+
+
+   Resize      proc      A_pSource:dword, A_pDest:dword, A_iWidth:dword, A_iHeight:dword, A_iRatio:dword
+
+      local TV_iRowOut:dword
+
+      local TV_iColOut:dword
+
+
+
+      pusha
+
+      
+
+      mov edi, A_pDest
+
+      
+
+      mov ebx, A_iRatio
+
+      xor edx, edx
+
+      
+
+      
+
+      ; 출력 파일의 너비 = 소스 / 비율  (나머지는 무시한다)
+
+      mov eax, A_iHeight
+
+      div ebx
+
+      mov TV_iRowOut, eax
+
+      
+
+      ; 출력 파일의 폭 = 소스 / 비율  (나머지는 무시한다.)
+
+      mov eax, A_iWidth
+
+      div ebx
+
+      mov TV_iColOut, eax
+
+      
+
+      xor edx, edx
+
+      xor ecx, ecx
+
+
+
+
+
+      ;invoke ComputeOnePixel, A_pSource, A_iWidth, A_iRatio, 0, 0
+
+      
+
+      .while edx < TV_iRowOut
+
+         .while ecx < TV_iColOut
+
+            invoke ComputeOnePixel, A_pSource, A_iWidth, A_iRatio, edx, ecx
+
+            mov byte ptr [edi], al
+
+            inc edi
+
+            inc ecx
+
+         .endw
+
+         xor ecx, ecx
+
+         inc edx
+
+      .endw
+
+      
+
+      popa
+
+      ret
+
+      
+
+   Resize      endp
+
+   
+
+   ;ComputeOnePixel      proc         A_pSource:dword, A_iWidth:dword,
+A_iHeight:dword, A_iRatio:dword, A_iRow:dword, A_iCol:dword
+
+   ComputeOnePixel      proc      uses ebx edx ecx esi edi 
+ A_pSource:dword, A_iWidth:dword, A_iRatio:dword, A_iRow:dword,
+A_iCol:dword
+
+   
+
+      
+
+      
+
+      ; esi에 소스의 주소가 들어간다.
+
+      mov esi, A_pSource
+
+
+
+      ;; 원래 소스의 포인터에 각 픽셀의 시작 지점을 계산해서 더한다.
+
+      ;; (10,10) 픽셀의 시작 주소는 원래 소스의 포인터에 (10*width*ratio) + (ratio*10) 을 더해야 한다.
+
+      xor edx, edx
+
+      mov eax, A_iWidth
+
+      mov ecx, A_iRatio
+
+      
+
+      ; width * ratio
+
+      mul ecx
+
+      ; width * ratio * row
+
+      mul A_iRow
+
+      mov ebx, eax
+
+            
+
+      mov eax, ecx
+
+      ; ratio * column
+
+      mul A_iCol
+
+      
+
+      ; sum
+
+      add ebx, eax
+
+      add esi, ebx
+
+      
+
+      mov edi, esi
+
+      
+
+      ; eax에는 비율이 ecx에는 8로 나눈 값이 들어간다.
+
+      mov eax, A_iRatio
+
+      mov ecx, eax
+
+      shr ecx, 3
+
+      
+
+      pxor MM3, MM3
+
+      
+
+      xor edx, edx
+
+      ; WHILE 모든 행 읽기 -> 몇 행을 읽어야 하는지가 eax에 저장되어 있다.
+
+      .while edx < eax
+
+         ; WHILE 8바이트 읽기 루프 -> 한 행에 8바이트씩 몇 번 읽어야 하는지가 ecx에 저장되어 있다.
+
+         xor ebx, ebx
+
+         .while ebx < ecx
+
+            ; 4바이트를 읽는다.
+
+            movd MM1, dword ptr [esi]
+
+            punpcklbw MM1, MM0      ; 바이트를 워드로 확장
+
+      
+
+            ; 다음 4바이트를 읽는다.
+
+            add esi, 4
+
+            movd MM2, dword ptr [esi]
+
+            punpcklbw MM2, MM0      ; 바이트를 워드로 확장
+
+      
+
+            ; 4바이트씩 더한다.
+
+            paddsw MM1, MM2
+
+      
+
+            ; MM3에 결과를 저장
+
+            paddsw MM3, MM1
+
+            
+
+            add esi, 4
+
+            inc ebx
+
+         .endw
+
+         
+
+         ; 다음 행을 읽기 위해서는 폭의 크기만큼 더해주어야 한다.
+
+         add edi, A_iWidth
+
+         mov esi, edi
+
+         inc edx
+
+      .endw
+
+      
+
+      movd edx, MM3
+
+      mov ebx, edx
+
+      shr edx, 16
+
+      and ebx, 0FFFFh
+
+      mov eax, edx
+
+      add eax, ebx
+
+      
+
+      psrlq MM3, 32
+
+      movd edx, MM3
+
+      mov ebx, edx
+
+      shr edx, 16
+
+      and ebx, 0FFFFh
+
+      
+
+      add eax, edx
+
+      add eax, ebx
+
+      
+
+      xor edx, edx
+
+      div A_iRatio
+
+      div A_iRatio
+
+      
+
+      and eax, 0ffh
+
+      
+
+      ;invoke wsprintf, addr buffer, addr format2, A_iRow, A_iCol
+
+      ;invoke StdOut, addr buffer
+
+      
+
+      ret
+
+   ComputeOnePixel      endp
+
+   
+
+   ; #########################################################################
+
+
+
+
+
+
+
+StdOut proc lpszText:DWORD
+
+
+
+    LOCAL hOutPut  :DWORD
+
+    LOCAL bWritten :DWORD
+
+    LOCAL sl       :DWORD
+
+
+
+    invoke GetStdHandle,STD_OUTPUT_HANDLE
+
+    mov hOutPut, eax
+
+
+
+    invoke StrLen,lpszText
+
+    mov sl, eax
+
+
+
+    invoke WriteFile,hOutPut,lpszText,sl,ADDR bWritten,NULL
+
+
+
+    mov eax, bWritten
+
+    ret
+
+
+
+StdOut endp
+
+
+
+; #########################################################################
+
+StrLen proc item:DWORD
+
+
+
+  ; -------------------------------------------------------------
+
+  ; This procedure has been adapted from an algorithm written by
+
+  ; Agner Fog. It has the unusual characteristic of reading up to
+
+  ; three bytes past the end of the buffer as it uses DWORD size
+
+  ; reads. It is measurably faster than a classic byte scanner on
+
+  ; large linear reads and has its place where linear read speeds
+
+  ; are important.
+
+  ; -------------------------------------------------------------
+
+
+
+    push    ebx
+
+    mov     eax,item               ; get pointer to string
+
+    lea     edx,[eax+3]            ; pointer+3 used in the end
+
+  @@:     
+
+    mov     ebx,[eax]              ; read first 4 bytes
+
+    add     eax,4                  ; increment pointer
+
+    lea     ecx,[ebx-01010101h]    ; subtract 1 from each byte
+
+    not     ebx                    ; invert all bytes
+
+    and     ecx,ebx                ; and these two
+
+    and     ecx,80808080h    
+
+    jz      @B                     ; no zero bytes, continue loop
+
+    test    ecx,00008080h          ; test first two bytes
+
+    jnz     @F
+
+    shr     ecx,16                 ; not in the first 2 bytes
+
+    add     eax,2
+
+  @@:
+
+    shl     cl,1                   ; use carry flag to avoid branch
+
+    sbb     eax,edx                ; compute length
+
+    pop     ebx
+
+
+
+    ret
+
+
+
+StrLen endp
+
+
+
+end start
+
+
+
+}}}
+
+
+
+
+
+
+

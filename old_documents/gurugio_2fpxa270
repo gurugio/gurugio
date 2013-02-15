@@ -1,0 +1,70 @@
+= PXA270 버그 추적 게시판 =
+
+== 2006.7.31 ==
+
+ * 회로도 pxa270에 핀 이름 수정
+  * USBHPEN0_SSPRXD3_SSPTXD2_FFRI_AC97_SYSCLK_GPIO89 -> USBHPEN1_ ~~
+  * BB_OB_CLK_SSPTXD3_CIF_DD0_GPIO81 -> BB_OB_DAT0_~
+
+ * PXA270 핀 이름, 핀 번호 확인 -> 이상 없음
+
+== 2006.7.20 ==
+
+ * GPIO 설정을 WinCE와 같게 수정
+
+ * fs/jffs2/write.c에서 160, 143,144를 주석처리함
+
+ * 플래쉬에 값을 쓰거나 지울때는 플래쉬의 섹터 크기 단위로 해야한다. 우리 플래쉬의 섹터 크기는 0x40000이므로 따라서 커널 영역의 크기가 0x180000보다 작으려면 0x140000으로 지정해야 한다.
+  * bboot/include/board.h 에서 KERNEL_MAX_SIZe를 0x00140000으로 수정
+  * drivers/mtd/maps/skku.c에서 39 줄을 0x00140000으로 바꿈
+  * 이렇게 커널 이미지와 루트 이미지를 떨어뜨리니까 다음 에러는 사라졌음
+   {{{
+Write of 107 bytes at 0x00f49b54 failed. returned -30, retlen 0
+
+Not marking the space at 0x00f49b54 as dirty because the flash driver returned retlen zero
+   }}} 
+
+ * 커널이 플래시를 지우거나 쓰지 못함
+  * 그럼 nfs를 써서 플래시의 루트 이미지를 안쓰면?
+   * 네트워크 드라이버를 로드하다가 재부팅되는 버그발견 
+   * net/ipv4/af_inet.c 의 946 라인에서 멈추는 현상 발견! -> 주석처리 해서 테스트함
+   * packet_socket 초기화 중에 멈추는 현상 발견 -> 커널 옵션에서 제거
+   * 네트워크 드라이버의 문제를 찾지 못함.. -> '''먼저 루트 이미지 로드 문제 해결부터'''
+  * 루트 이미지를 플래시에 퓨징하고 로드하면?
+   * mkjffs2에 --pad=0x1000000 옵션을 추가해서 시도
+   {{{
+<drivers/mtd/maps/skku.c 102>
+NET: Registered protocol family 2 -> 재부팅!!
+}}}
+ {{{
+Creating 3 MTD partitions on "flash0":
+0x00000000-0x00040000 : "boot"
+0x00040000-0x00180000 : "kernel"
+0x001c0000-0x02000000 : "rootfs"
+<drivers/mtd/maps/skku.c 102>
+VFS: Mounted root (jffs2 filesystem).
+Freeing init memory: 56K
+Erase at 0x01880000 failed immediately: -EROFS. Is the sector locked?
+Erase at 0x01840000 failed immediately: -EROFS. Is the sector locked?
+Erase at 0x01800000 failed immediately: -EROFS. Is the sector locked?
+ }}}
+
+
+== 2006.7.18 ==
+
+ * CPLD를 통한 인터럽트에 관한 설정
+  * pxa255보드 arch/arm/mach-pxa/SKKUpxa255.c
+   * SKKUpxa255_init_irq() : set_GPIO_IRQ_edge(0, GPIO_RISING_EDGE) 추가
+
+ * u-boot 1.1.2 포팅 시작
+  * 기본 파일, 디렉토리 생성까지 완료
+  * 파일 수정 시작할 것.
+
+----
+ '''버그 추적'''
+ * 제목
+ 1. 버그를 재현하기 위한 단계
+ 2. 예상 수행 결과, 버그가 없을 때
+ 3. 실제 수행 결과, 버그 때문에 생긴 결과
+ 4. 수정 여부, 수정 방법
+

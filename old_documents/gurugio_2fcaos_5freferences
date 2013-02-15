@@ -1,0 +1,188 @@
+= 참고 자료 =
+
+
+[[TableOfContents]] 
+
+== 필독 자료 ==
+
+ * '''전체적인 흐름 및 개발 환경'''
+  * http://wiki.osdev.org/Creating_a_64-bit_kernel
+
+ * Cottontail OS 구현을 위해 모아놓은 자료 - 내가 필요한 자료는 다 있음
+  * http://www.osdever.net/cottontail/
+
+ * Bona File OS 홈페이지 - 커널 구현에 필요한 자료가 매우 많음
+  * http://www.osdever.net/
+
+ * ACM SIGOPS Operating Systems Review 리눅스 커널 개발에 관한 이슈들
+  * http://portal.acm.org/toc.cfm?id=1400097
+
+ * APM/파워 관리 기능 관련 권수호님 강좌
+  * http://kelp.or.kr/korweblog/stories.php?story=03/02/20/5722630&topic=12
+  * http://kelp.or.kr/korweblog/stories.php?story=02/09/13/3086028&topic=12
+
+ * 리눅스 커널 권수호님 강좌
+  * http://kelp.or.kr/korweblog/stories.php?story=08/04/22/3869287&topic=12
+
+ * 리눅스를 x86_64에 포팅하는 문서
+  * http://lwn.net/2001/features/OLS/pdf/pdf/x86-64.pdf
+
+== SMP/APIC ==
+
+ * http://www.faqs.org/docs/Linux-HOWTO/SMP-HOWTO.html
+ 
+ * http://www.osdever.net/cottontail/#SMP%20(IA32)  - 멀티프로세서 설명
+
+ * 리눅스 커널의 부팅 설명 - SMP 관련 챕터를 읽을 것 http://tldp.org/HOWTO/Linux-i386-Boot-Code-HOWTO/index.html
+
+ * http://wiki.osdev.org/APIC
+
+ * Intel Multiprocessor Specification v1.4, May, 1997
+== 커널 이해 ==
+
+ * 메모리 LEAK 검출 구현 방법
+  * http://minjang.egloos.com/1414494
+
+ * http://www.zdnet.co.kr/builder/platform/nix/0,39031679,39129093,00.htm 스레드,스케줄러,가상 메모리 개론 문서
+
+ * http://kernelproject.org/docs/linux/kernel/KSTY_GRP/  리눅스 커널의 이해 책 관련 자료
+
+ * 구글에서 understanding linux kernel filetype:ppt 로 검색하면 발표자료가 많음
+
+ * iamroot 스터디 자료
+  * http://www.iamroot.org/wiki/index.php/%EB%8C%80%EB%AC%B8
+  * http://lks.springnote.com/pages/880430
+
+ * x86-64 머신의 Calling-convention (마지막 챕터)
+  * http://www.x86-64.org/documentation/abi.pdf
+
+샘플 코드
+{{{
+ 34     caos_printf(hello, 1, 2, 3, 4, 5, 6);
+
+
+ 48   100092:   41 b9 05 00 00 00       mov    $0x5,%r9d
+ 49   100098:   41 b8 04 00 00 00       mov    $0x4,%r8d
+ 50   10009e:   b9 03 00 00 00          mov    $0x3,%ecx
+ 51   1000a3:   ba 02 00 00 00          mov    $0x2,%edx
+ 52   1000a8:   be 01 00 00 00          mov    $0x1,%esi
+ 53   1000ad:   bf 40 12 10 00          mov    $0x101240,%edi
+ 54   1000b2:   31 c0                   xor    %eax,%eax
+ 55   1000b4:   c7 04 24 06 00 00 00    movl   $0x6,(%rsp)
+ 56   1000bb:   e8 20 05 00 00          callq  1005e0 <caos_printf>
+
+}}}
+
+
+ * gcc의 built-in 매크로를 이용하여 printf 구현하기
+  * http://wiki.osdev.org/Printing_to_Screen
+  * 64비트에서는 함수 인자를 레지스터로 저장하므로 printf를 만들기 위해서는 레지스터의 값들을 스택으로 저장하는 코드를 어셈블리로 만들어야 한다.
+  * gcc의 매크로를 이용하면 간편하게 이런 코드를 삽입할 수 있다.
+== Long mode 부팅 관련 자료 조사 ==
+
+ * http://kkamagui.tistory.com/ : 64bit 커널 만드신 분
+ * http://osinside.net/osinside/osinside.htm : OS 이론/원리에 대한 설명, 코드 설명도 있음
+ * http://micingamja.egloos.com/ : 64bit 커널 만들기 중 (http://kldp.org/taxonomy/term/3663)
+
+
+
+== 다른 공개 OS ==
+
+ * http://www.menuetos.net/index.htm MenuetOS64 64비트 버전이 완성됨
+ * http://geekos.sourceforge.net/index.php  : GeekOS
+ * http://www.reactos.org/ko/index.html : ReactOS
+ * http://kldp.org/blog/2942 : 나빌레라님이 쓰신 OS 제작 강좌
+ * http://blog.swssm.org/category/Project_2008_End/%EB%A9%80%ED%8B%B0%20%EC%BD%94%EC%96%B4%20%EC%9A%B4%EC%98%81%EC%B2%B4%EC%A0%9C%EC%9D%98%20%EA%B0%9C%EB%B0%9C 멤버쉽에서 작업하던 기록
+ * http://special.dnip.net:4000/entry.php?blogid=233 bochs 환경에서 OS 개발 기록
+
+ * http://www.o3one.org/  64bit, SMP 완성됨
+== MicroC/OS-II 관련 ==
+ * http://set2happy.tistory.com/445?srchid=BR1http%3A%2F%2Fset2happy.tistory.com%2F445
+
+ * http://set2happy.tistory.com/442?srchid=BR1http%3A%2F%2Fset2happy.tistory.com%2F442
+
+ * ucos를 linux/win32로 포팅 http://justforfun.tistory.com/84?srchid=BR1http%3A%2F%2Fjustforfun.tistory.com%2F84
+
+ * ucos 프로그래밍 설명 : http://blog.naver.com/wizytale/90025804889
+
+ * 한국 ucos http://www.dioiz.com/
+
+ * ucos 본사 http://www.micrium.com/
+
+
+== 참고 서적 ==
+
+ * 운영체제 이론
+  * Operating System Comcepts/Abraham Silberschatz *****
+  * Modern Operating Systems/Andrew S. Tanenbaum *****
+  * Operating Systems Design and Implementation/Andrew S Tanenbaum ***
+  * Design of the UNIX Operating System/Maurice J. Bach
+  * Operating Systems Internals and Design Principles/William Stallings 
+
+ * RTOS 디자인
+  * RTOS를 이용한 실시간 임베디드 시스템 디자인 *****
+  * Simple Real-time Operating System: A Kernel Inside View for a Beginner 
+  * MicroC OS II: The Real Time Kernel/Jean J. Labrosse
+  * 실시간 임베디드 멀티스레딩 누구나 쉽게 이해할 수 있는 RTOS 멀티스레드 프로그래밍
+
+
+== 커널 디자인 ==
+
+ * [http://www.asmlove.co.kr/wiki/wiki.php/gurugio/caos_refer_paper OS 관련 논문 모음] - 전반적인 이론이나 주요 기능별 논문 모음
+
+
+커널 디자인 관련 논문
+
+ * [http://www.minix3.ru/docs/herder_thesis.pdf Towards a true microkernel operating system]
+ * [http://www.minix3.org/doc/EDCC-2006.pdf Construction of a Highly Dependable Operating System]
+ * [http://www.computer.org/portal/site/computer/menuitem.5d61c1d591162e4b0ef1bd108bcd45f3/index.jsp?&pName=computer_level1_article&TheCat=1005&path=computer/homepage/0506&file=cover1.xml&xsl=article.xsl&  Can We Make Operating Systems Reliable and Secure?]
+ * [http://portal.acm.org/citation.cfm?id=224075  On micro-kernel construction]: microkernel의 구성 요소에 대한 설명과 구현 예, 기본 설명이 자세함
+ * [http://portal.acm.org/citation.cfm?id=234473  Toward real microkernels]: microkernel 에 대한 간단한 개념과 실용화 가능성, 처음 읽기 좋은 논문
+ * [http://l4ka.org/publications/ L4 & Microkernel 관련 논문들]
+ * [http://domino.research.ibm.com/comm/research_projects.nsf/pages/k42.index.html  IBM에서만든 K42의 구조 관련 논문]
+
+
+== 마이크로커널 제품 ==
+
+
+MINIX3
+
+ * '''책도 있고 논문도 많아서 쉽게 시작?'''
+
+ * http://www.minix3.org/
+  * http://www.minix3.org/doc/  논문/문서
+ * http://en.wikipedia.org/wiki/Minix
+
+
+
+L4 microkernel
+
+ * 쉽게 시작할만한 자료가 있을까?
+
+ * 위키 http://en.wikipedia.org/wiki/L4_microkernel_family
+ * 소개 http://www.nationmaster.com/encyclopedia/L4-kernel
+ * 소개 - 참고 자료 챕터 http://www.hindawi.com/GetArticle.aspx?doi=10.1155/2008/234710&e=html
+ * chen Liedtke 저자의 논문 http://i30www.ira.uka.de/aboutus/people/personal/liedtke/
+ * 프로젝트
+  * http://os.inf.tu-dresden.de/L4/
+  * http://l4hq.org/projects/kernel/
+
+
+
+QNX 
+
+ * http://en.wikipedia.org/wiki/QNX
+
+
+
+KeyKOS Nanokernel Architecture
+
+ * 초소형 커널을 만들고 대부분의 기능을 오브젝트로 구현한 커널
+ * http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.38.6243
+
+
+
+Symbian
+
+ * ARM에서만 동작하므로 실습하거나 사용하기 곤란..
+ * 일단 지금은 x86 환경에 집중하자.

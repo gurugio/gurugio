@@ -1,0 +1,1324 @@
+[[TableOfContents]]
+
+= 문자 디바이스 드라이버 예제 =
+''  ''
+
+'''문서 소개:''' ''이 문서는 이호님의 [Linux Kernel Programming v1.01]을 제가 공부하면서 공부한 내용을 기록한 문서입니다. 
+이 문서의 저작권은 없으며 원하시면 자유롭게 사용하실 수 있습니다. ''
+
+== Skeleton 소스 ==
+
+----
+ * Hello, World를 커널 메시지로 출력하는 프로그램의 소스
+ * 모듈을 커널로 로드하고 언로드할 때 메시지를 출력한다.
+
+{{{
+      1 #include <linux/init.h>
+      2 #include <linux/module.h>
+      3 #include <linux/kernel.h>
+      4
+      5 static int hello_init(void)
+      6 {
+      7   printk("Hello, world\n");
+      8   return 0;
+      9 }
+     10
+     11 static void hello_exit(void)
+     12 {
+     13   printk("Goodbyt, world\n");
+     14
+     15 }
+     16
+     17 module_init(hello_init);
+     18 module_exit(hello_exit);
+     19
+     20 MODULE_LICENSE("Dual BSD/GPL");
+     21
+}}}
+
+----
+ * Makefile : ''skull'' 을 원하는 소스 이름으로 바꿔서 사용한다.
+
+{{{
+      1 obj-m := skull.o
+      2
+      3 KDIR := /lib/modules/$(shell uname -r)/build
+      4 PWD := $(shell pwd)
+      5
+      6 default:
+      7   $(MAKE) -C $(KDIR) SUBDIRS=$(PWD) modules
+      8   insmod skull.ko
+      9
+     10 clean:
+     11   rm -rf *.ko
+     12   rm -rf *.mod.*
+     13   rm -rf .*.cmd
+     14   rm -rf *.o
+     15   rmmod skull
+}}}
+
+----
+ * 모듈에서 출력한 메시지 확인
+
+{{{
+#dmesg | tail
+
+혹은
+
+#tail /var/log/messages
+}}}
+
+
+== step 2 ==
+
+----
+ * 문자 데이터를 쓰거나 읽을 수 있는 문자형 장치와 디바이스 드라이버
+
+ * minibuf.c
+
+{{{
+/* Every driver source has to include these headers */
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+
+/* These are for minibuf driver */
+#include <linux/fs.h>
+//#include <linux/kdev_t.h> // For 2.4, 2.6 does not use kdev_t type.
+#include <linux/errno.h> // EBUSY
+#include <linux/types.h> // dev_t -> major/minor number
+#include <asm/uaccess.h>
+
+
+/*
+ * Definitions for Device
+ */
+#define DEVICE_NAME "Minibuf"
+#define BUFFER_LEN 1024
+
+/*
+ * Global
+ */
+static int major = 0;
+static int open_count = 0;
+static char strbuf[BUFFER_LEN];
+static int buf_pos = 0, buf_end = 0;
+
+
+/*
+ * functions
+ */
+
+static int device_open(struct inode *inode, struct file *filp);
+static int device_release(struct inode *inode, struct file *filp);
+static ssize_t device_read(struct file *filp, char *buf, size_t length, loff_t *offset);
+static ssize_t device_write(struct file *filp, const char *buf, size_t length, loff_t *offset);
+
+static int is_buffer_empty(void);
+static int is_buffer_full(void);
+static int read_buffer_char(char *buffer);
+static int write_buffer_char(char *buffer);
+
+/*
+ * Device Operations
+ */
+struct file_operations device_fops = {
+	.owner = THIS_MODULE,
+	.llseek = NULL,
+	.read = device_read,
+	.write = device_write,
+	.ioctl = NULL,
+	.open = device_open,
+	.release = device_release,
+};
+
+
+/* 
+ * init/exit
+ */ 
+static int device_init(void)
+{
+	printk("Loading Mini Buffer Module\n");
+
+	if ( (major = register_chrdev(major, DEVICE_NAME, &device_fops)) < 0) {
+		printk(DEVICE_NAME " : Device registration failed (%d)\n", major);
+		return major;
+	}
+
+	printk(DEVICE_NAME " : Device registered with Major number = %d\n", major);
+
+	
+	return 0;
+}
+
+static void device_exit(void)
+{
+	int ret;
+	printk("Unloading Mini Buffer Module\n");
+
+	if ( (ret = unregister_chrdev(major, DEVICE_NAME)) < 0) {
+		printk(DEVICE_NAME " : Device unregistration failed (%d)\n", ret);
+	}
+
+}
+
+/*
+ * Device operation
+ */
+
+int device_open(struct inode *inode, struct file *filp)
+{
+	printk(DEVICE_NAME " : Device open (%d, %d)\n", MAJOR(inode->i_rdev),
+				 MINOR(inode->i_rdev));
+	
+	if (try_module_get(THIS_MODULE) == 0) {
+		printk(DEVICE_NAME " : Device is not loaded\n");
+		return -ENODEV;
+	}
+
+	if (open_count != 0) {
+		printk(DEVICE_NAME " : Device already open for reading\n");
+		return -EBUSY;
+	}	
+		
+	open_count++;
+	printk(DEVICE_NAME " : Device open counter = %d\n", open_count);
+	
+
+	return 0;
+}
+
+int device_release(struct inode *inode, struct file *filp)
+{
+	printk(DEVICE_NAME " : Device is released (%d, %d)\n",
+				 MAJOR(inode->i_rdev), MINOR(inode->i_rdev) );
+
+	if (open_count == 0) {
+		printk(DEVICE_NAME " : Device has not opened\n");
+		return -EINVAL;
+	}
+
+	open_count--;
+
+	printk(DEVICE_NAME " : Device open counter = %d\n", open_count);
+	module_put(THIS_MODULE);
+
+	return 0;
+}
+
+ssize_t device_read(struct file *filp, char *buffer, size_t length,
+										loff_t *offset)
+{
+	int count = 0;
+
+	if (is_buffer_empty() ) {
+		printk(DEVICE_NAME " : Read return EOF\n");
+		return 0;
+	}
+
+	while ( is_buffer_empty() == 0 && length > 0) {
+		read_buffer_char(buffer);
+		
+		/* */
+		//printk(DEVICE_NAME " DEBUG: read=<%c>, length=<%d>, count=<%d>\n",
+		//			 *buffer, length, count);
+		
+		buffer++;
+		length--;
+		count++;
+
+	}
+
+
+	/* 
+	 * Don't change filp directly 
+	 * If offset is changed, filp is also changed by kernel after read/write function ends
+	 */
+	*offset -= count;
+	
+	printk(DEVICE_NAME " : Read %d bytes\n", count);
+	//printk(DEVICE_NAME " : File position = %d\n", (unsigned int)filp->f_pos);
+	printk(DEVICE_NAME " : Offset = %d\n", (int)*offset);
+
+	return count;
+}
+	
+
+ssize_t device_write(struct file *filp, const char *buffer, size_t length,
+										 loff_t *offset)
+{
+	int count = 0;
+
+	if (is_buffer_full() != 0) {
+		printk(DEVICE_NAME " : No space for Writing \n");
+		return -ENOMEM;
+	}
+
+	while (is_buffer_full() == 0 && length > 0) {
+		write_buffer_char ( (char *)buffer);
+		buffer++;
+		length--;
+		count++;
+	}
+
+	/* 
+	 * Don't change filp directly 
+	 * If offset is changed, filp is also changed by kernel after read/write function ends
+	 */
+	*offset += count;
+
+	printk(DEVICE_NAME " : Write %d bytes\n", count);
+	//printk(DEVICE_NAME " : File position = %d\n", (unsigned int)filp->f_pos);
+	printk(DEVICE_NAME " : Offset = %d\n", (int)*offset);
+
+	return count;
+	
+}
+
+/*
+ * Buffer management
+ */
+int is_buffer_empty(void)
+{
+	if (buf_pos == buf_end)
+		return 1;
+	else
+		return 0;
+}
+
+int is_buffer_full(void)
+{
+	int pos = buf_end + 1;
+
+	if (pos == BUFFER_LEN)
+		pos = 0;
+
+	if (pos == buf_pos)
+		return 1;
+	else
+		return 0;
+}
+
+int read_buffer_char(char *buffer)
+{
+	// if there is data in buffer
+	if (is_buffer_empty() == 1)
+		return -1;
+	
+	// copy one byte data to user space
+	put_user(strbuf[buf_pos], buffer);
+
+	// proceed first data position
+	buf_pos++;
+	if (buf_pos == BUFFER_LEN)
+		buf_pos = 0;
+
+	return 0;
+}
+
+int write_buffer_char(char *buffer)
+{
+	// if there is a space to write data
+	if (is_buffer_full() == 1)
+		return -1;
+
+	// copy one byte from user space
+	get_user(strbuf[buf_end], buffer);
+
+	// proceed last data position
+	buf_end++;
+	if (buf_end == BUFFER_LEN)
+		buf_end = 0;
+
+	return 0;
+}
+
+
+
+
+
+module_init(device_init);
+module_exit(device_exit);
+
+MODULE_LICENSE("Dual BSD/GPL");
+
+
+
+}}}
+
+----
+ * test_app.c
+
+{{{
+
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+
+int main(void)
+{
+	int fd;
+	int ret;
+	char test_buf1[] = "I am a boy"; // 10 bytes
+	char test_buf2[] = "You are a girl";  // 14 bytes
+	char test_buf3[] = "qwertyuiop[]asdfghjkl;'zxcvbnm,./1234567890-"; //44
+
+	char read_buf[1024];
+	
+	if ( (fd = open("/dev/minibuf", O_RDWR) ) < 0) {
+		perror("/dev/minibuf open error\n");
+		return -1;
+	}
+
+
+	ret = write(fd, test_buf1, strlen(test_buf1));
+	
+	if (ret != strlen(test_buf1) ) {
+		printf("Writing \"%s\" is fail\n", test_buf1);
+		goto END_MAIN;
+	}
+
+	ret = write(fd, test_buf2, strlen(test_buf2));
+	
+	if (ret != strlen(test_buf2) ) {
+		printf("Writing \"%s\" is fail\n", test_buf2);
+		goto END_MAIN;
+	}
+
+	ret = write(fd, test_buf3, strlen(test_buf3));
+	
+	if (ret != strlen(test_buf3) ) {
+		printf("Writing \"%s\" is fail\n", test_buf3);
+		goto END_MAIN;
+	}
+
+
+	do {
+		ret = read(fd, read_buf, 10);
+		read_buf[ret] = '\0';
+
+		if (ret > 0) {
+			printf("%d bytes are read = <%s>\n", ret, read_buf);
+		} else {
+			printf("Return <%d>", ret);
+			perror("EOF\n");
+			goto END_MAIN;
+		}
+
+	} while (1);
+
+END_MAIN:
+
+	close(fd);
+
+	return 0;
+}
+
+
+}}}
+
+----
+ * 테스트 결과
+ 
+{{{
+root@gioserver: step2# ./a.out
+10 bytes are read = <I am a boy>
+10 bytes are read = <You are a >
+10 bytes are read = <girlqwerty>
+10 bytes are read = <uiop[]asdf>
+10 bytes are read = <ghjkl;'zxc>
+10 bytes are read = <vbnm,./123>
+8 bytes are read = <4567890->
+EOF
+: Success
+Return <0>root@gioserver: step2#
+}}}
+
+== Step 3 ==
+
+ * Blocking I/O 를 사용하여 더 이상 데이터를 쓸 공간이 없으면 잠들고 공간이 생기면 깨어나게 됨
+
+ * minibuf.c
+ 
+{{{
+/* Every driver source has to include these headers */
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+
+/* These are for minibuf driver */
+#include <linux/fs.h>
+//#include <linux/kdev_t.h> // 2.6 커널에서는 kdev_t 타입을 사용하지 않는다. 대신 dev_t 타입을 사용한다.
+#include <linux/errno.h> // EBUSY
+#include <linux/types.h> // dev_t -> major/minor number
+#include <asm/uaccess.h>
+
+
+/*
+ * Definitions for Device
+ */
+#define DEVICE_NAME "Minibuf"
+#define BUFFER_LEN 16
+
+/*
+ * Global
+ */
+static int major = 0;
+static int open_count = 0;
+static char strbuf[BUFFER_LEN];
+static int buf_pos = 0, buf_end = 0;
+
+static int read_open = 0;
+static int write_open = 0;
+
+/* Delare wait Q header for writing data */
+DECLARE_WAIT_QUEUE_HEAD (write_wait_queue);
+
+
+
+
+/*
+ * functions
+ */
+
+static int device_open(struct inode *inode, struct file *filp);
+static int device_release(struct inode *inode, struct file *filp);
+static ssize_t device_read(struct file *filp, char *buf, size_t length, loff_t *offset);
+static ssize_t device_write(struct file *filp, const char *buf, size_t length, loff_t *offset);
+
+static int is_buffer_empty(void);
+static int is_buffer_full(void);
+static int read_buffer_char(char *buffer);
+static int write_buffer_char(char *buffer);
+
+/*
+ * Device Operations
+ */
+struct file_operations device_fops = {
+	.owner = THIS_MODULE,
+	.llseek = NULL,
+	.read = device_read,
+	.write = device_write,
+	.ioctl = NULL,
+	.open = device_open,
+	.release = device_release,
+};
+
+
+/* 
+ * init/exit
+ */ 
+static int device_init(void)
+{
+	printk("Loading Mini Buffer Module\n");
+
+	if ( (major = register_chrdev(major, DEVICE_NAME, &device_fops)) < 0) {
+		printk(DEVICE_NAME " : Device registration failed (%d)\n", major);
+		return major;
+	}
+
+	printk(DEVICE_NAME " : Device registered with Major number = %d\n", major);
+	
+	return 0;
+}
+
+static void device_exit(void)
+{
+	int ret;
+	printk("Unloading Mini Buffer Module\n");
+
+	if ( (ret = unregister_chrdev(major, DEVICE_NAME)) < 0) {
+		printk(DEVICE_NAME " : Device unregistration failed (%d)\n", ret);
+	}
+
+}
+
+/*
+ * Device operation
+ */
+
+int device_open(struct inode *inode, struct file *filp)
+{
+	printk(DEVICE_NAME " : Device open (%d, %d)\n", MAJOR(inode->i_rdev),
+				 MINOR(inode->i_rdev));
+	
+	if (try_module_get(THIS_MODULE) == 0) {
+		printk(DEVICE_NAME " : Device is not loaded\n");
+		return -ENODEV;
+	}
+
+	/* If the device is opened for writing or read&write, */
+	/*if ( ((filp->f_flags & O_ACCMODE) & (O_WRONLY | O_RDWR)) != 0) {
+		if (write_open != 0) {
+			printk(DEVICE_NAME " : Device already open for writing\n");
+			return -EBUSY;
+		} else {
+			write_open++;
+		}*/
+	
+	if ( ((filp->f_flags & O_ACCMODE) & (O_WRONLY | O_RDWR)) != 0) {
+		write_open++;
+		printk(DEVICE_NAME " : Device is opened for writing\n");
+		printk(DEVICE_NAME " : Writing open count = <%d>\n", write_open);
+	/* If the device is opened for only reading */
+	} else {
+		if (read_open != 0) {
+			printk(DEVICE_NAME " : Device already open for reading\n");
+			return -EBUSY;
+		} else
+			read_open++;
+	}
+		
+		
+	open_count++;
+	printk(DEVICE_NAME " : Device open counter = %d\n", open_count);
+	
+
+	return 0;
+}
+
+int device_release(struct inode *inode, struct file *filp)
+{
+	printk(DEVICE_NAME " : Device is released (%d, %d)\n",
+				 MAJOR(inode->i_rdev), MINOR(inode->i_rdev) );
+
+	if ( ((filp->f_flags & O_ACCMODE) & (O_WRONLY | O_RDWR)) != 0)
+	 	write_open--;
+	else
+		read_open--;
+
+	
+	if (open_count == 0) {
+		printk(DEVICE_NAME " : Device has not opened\n");
+		return -EINVAL;
+	}
+
+	open_count--;
+
+	printk(DEVICE_NAME " : Device open counter = %d\n", open_count);
+	module_put(THIS_MODULE);
+
+	return 0;
+}
+
+ssize_t device_read(struct file *filp, char *buffer, size_t length,
+										loff_t *offset)
+{
+	int count = 0;
+
+	if (is_buffer_empty() ) {
+		printk(DEVICE_NAME " : Read return EOF\n");
+		return 0;
+	}
+
+	while ( is_buffer_empty() == 0 && length > 0) {
+		read_buffer_char(buffer);
+		
+		buffer++;
+		length--;
+		count++;
+
+		wake_up_interruptible(&write_wait_queue);
+		
+	}
+
+	//put_user((char)0, buffer);
+	//count++;
+
+	/* 
+	 * Don't change filp directly 
+	 * If offset is changed, filp is also changed by kernel after read/write function ends
+	 */
+	*offset -= count;
+	
+	printk(DEVICE_NAME " : Read %d bytes\n", count);
+	printk(DEVICE_NAME " : File position = %d\n", (unsigned int)filp->f_pos);
+	printk(DEVICE_NAME " : Offset = %d\n", (int)*offset);
+
+	return count;
+}
+	
+
+ssize_t device_write(struct file *filp, const char *buffer, size_t length,
+										 loff_t *offset)
+{
+	int count = 0;
+
+	if (is_buffer_full() != 0) {
+		printk(DEVICE_NAME " : Writing go to sleep\n");
+		interruptible_sleep_on(&write_wait_queue);
+		printk(DEVICE_NAME " : Writing wake up\n");
+	}
+
+	while (is_buffer_full() == 0 && length > 0) {
+		write_buffer_char ( (char *)buffer);
+		buffer++;
+		length--;
+		count++;
+	}
+
+	/* 
+	 * Don't change filp directly 
+	 * If offset is changed, filp is also changed by kernel after read/write function ends
+	 */
+	*offset += count;
+
+	printk(DEVICE_NAME " : Write %d bytes\n", count);
+	printk(DEVICE_NAME " : File position = %d\n", (unsigned int)filp->f_pos);
+	printk(DEVICE_NAME " : Offset = %d\n", (int)*offset);
+
+	return count;
+	
+}
+
+/*
+ * Buffer management
+ */
+int is_buffer_empty(void)
+{
+	if (buf_pos == buf_end)
+		return 1;
+	else
+		return 0;
+}
+
+int is_buffer_full(void)
+{
+	int pos = buf_end + 1;
+
+	if (pos == BUFFER_LEN)
+		pos = 0;
+
+	if (pos == buf_pos)
+		return 1;
+	else
+		return 0;
+}
+
+int read_buffer_char(char *buffer)
+{
+	// if there is data in buffer
+	if (is_buffer_empty() == 1)
+		return -1;
+	
+	// copy one byte data to user space
+	put_user(strbuf[buf_pos], buffer);
+
+	// proceed first data position
+	buf_pos++;
+	if (buf_pos == BUFFER_LEN)
+		buf_pos = 0;
+
+	return 0;
+}
+
+int write_buffer_char(char *buffer)
+{
+	// if there is a space to write data
+	if (is_buffer_full() == 1)
+		return -1;
+
+	// copy one byte from user space
+	get_user(strbuf[buf_end], buffer);
+
+	// proceed last data position
+	buf_end++;
+	if (buf_end == BUFFER_LEN)
+		buf_end = 0;
+
+	return 0;
+}
+
+
+
+
+
+module_init(device_init);
+module_exit(device_exit);
+
+MODULE_LICENSE("Dual BSD/GPL");
+
+}}}
+
+----
+ * test_app.c
+ 
+ {{{
+ #include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+
+int main(void)
+{
+	int fd;
+	int ret;
+	char test_buf1[] = "I am a boy"; // 10 bytes
+	char test_buf2[] = "You are a girl";  // 14 bytes
+	char test_buf3[] = "qwertyuiop[]asdfghjkl;'zxcvbnm,./1234567890-"; //44
+
+	char *p;
+	
+	char read_buf[1024];
+	
+	if ( (fd = open("/dev/minibuf", O_RDWR) ) < 0) {
+		perror("/dev/minibuf open error\n");
+		return -1;
+	}
+
+
+	ret = write(fd, test_buf1, strlen(test_buf1));
+	
+	if (ret != strlen(test_buf1) ) {
+		printf("Writing \"%s\" is fail\n", test_buf1);
+		goto END_MAIN;
+	}
+
+	p = test_buf2;
+	
+	do {	
+		ret = write(fd, p, strlen(p));
+	
+		if (ret != strlen(p) ) {
+			p += ret;
+			printf("Writing \"%s\" is fail\n", p);
+		} else {
+			break;
+		}
+
+	} while (1);
+	
+	p = test_buf3;
+
+	do {	
+		ret = write(fd, p, strlen(p));
+	
+		if (ret != strlen(p) ) {
+			p += ret;
+			printf("Writing \"%s\" is fail\n", p);
+		} else {
+			break;
+		}
+
+	} while (1);
+
+
+	do {
+		ret = read(fd, read_buf, 10);
+		read_buf[ret] = '\0';
+
+		if (ret > 0) {
+			printf("%d bytes are read = <%s>\n", ret, read_buf);
+		} else {
+			printf("Return <%d>", ret);
+			perror("EOF\n");
+			goto END_MAIN;
+		}
+
+	} while (1);
+
+END_MAIN:
+
+	close(fd);
+
+	return 0;
+}
+
+ 
+ }}}
+
+---- 
+ * 테스트 결과 : 테스트 프로그램을 실행하면 16바이트씩만 기록하고 프로그램이 잠든다.
+                 프로그램이 잠든 후 cat /dev/minibuf 하면 기록되었던 데이터가 읽혀지고
+                 테스트 프로그램은 다시 16바이트의 데이터를 기록하고 잠든다.
+                 cat 으로 데이터를 읽을 때마다 데이터를 기록할 수 있는 공간이 생기고
+                 잠들었던 테스트 프로그램이 깨어나게 된다.
+      
+ 
+ {{{
+ root@gioserver: step3# ./a.out &
+[1] 4976
+Writing "re a girl" is fail
+root@gioserver: step3# cat /dev/minibuf
+I am a boyYou acat: /dev/minibuf: Invalid argument
+root@gioserver: step3# Writing "uiop[]asdfghjkl;'zxcvbnm,./1234567890-" is fail
+
+root@gioserver: step3# cat /dev/minibuf
+re a girlqwertycat: /dev/minibuf: Invalid argument
+Writing ";'zxcvbnm,./1234567890-" is fail
+root@gioserver: step3# cat /dev/minibuf
+uiop[]asdfghjklcat: /dev/minibuf: Invalid argument
+Writing "4567890-" is fail
+root@gioserver: step3# cat /dev/minibuf
+;'zxcvbnm,./123cat: /dev/minibuf: Invalid argument
+root@gioserver: step3# 8 bytes are read = <4567890->
+EOF
+: Success
+Return <0>
+[1]+  Done                    ./a.out
+root@gioserver: step3# cat /dev/minibuf
+}}}
+
+
+== step 4 ==
+
+ * 모듈을 커널로 로드할 때 인자를 전달한다.
+ 
+ * minibuf.c
+
+
+{{{
+
+/*
+ *
+ *
+ * STEP 4
+ *
+ * Dynamic memory allocation
+ *
+ *
+ */
+
+
+/* Every driver source has to include these headers */
+#include <linux/init.h>bu
+#include <linux/module.h>
+#include <linux/kernel.h>
+
+/* These are for minibuf driver */
+#include <linux/fs.h>
+//#include <linux/kdev_t.h> // For 2.4, 2.6 does not use kdev_t type.
+#include <linux/errno.h> // EBUSY
+#include <linux/types.h> // dev_t -> major/minor number
+#include <asm/uaccess.h>
+
+#include <linux/moduleparam.h> // module_param
+
+/*
+ * Definitions for Device
+ */
+#define DEVICE_NAME "Minibuf"
+#define BUFFER_LEN 1024
+
+/*
+ * Global
+ */
+static int major = 0;
+static int open_count = 0;
+static char *strbuf;
+static int buf_pos = 0, buf_end = 0;
+
+static int read_open = 0;
+static int write_open = 0;
+
+/* Delare wait Q header for writing data */
+//DECLARE_WAIT_QUEUE_HEAD (write_wait_queue);
+
+static int bufsize = BUFFER_LEN;
+
+/* Definition of module parameter, which is external value inputted from insmod command */
+module_param(bufsize, int, 0);
+
+
+/*
+ * functions
+ */
+
+static int device_open(struct inode *inode, struct file *filp);
+static int device_release(struct inode *inode, struct file *filp);
+static ssize_t device_read(struct file *filp, char *buf, size_t length, loff_t *offset);
+static ssize_t device_write(struct file *filp, const char *buf, size_t length, loff_t *offset);
+
+static int is_buffer_empty(void);
+static int is_buffer_full(void);
+static int read_buffer_char(char *buffer);
+static int write_buffer_char(char *buffer);
+
+/*
+ * Device Operations
+ */
+struct file_operations device_fops = {
+	.owner = THIS_MODULE,
+	.llseek = NULL,
+	.read = device_read,
+	.write = device_write,
+	.ioctl = NULL,
+	.open = device_open,
+	.release = device_release,
+};
+
+
+/* 
+ * init/exit
+ */ 
+static int device_init(void)
+{
+	printk("Loading Mini Buffer Module\n");
+
+	if ( (major = register_chrdev(major, DEVICE_NAME, &device_fops)) < 0) {
+		printk(DEVICE_NAME " : Device registration failed (%d)\n", major);
+		return major;
+	}
+
+	printk(DEVICE_NAME " : Device registered with Major number = %d\n", major);
+
+	printk(DEVICE_NAME " : Buffer allocation size = %d\n", bufsize);
+
+	if (bufsize <= 0) {
+		printk(DEVICE_NAME " : invalid bufsize argument\n");
+		return -EINVAL;
+	}
+
+	if ( (strbuf = (char *)kmalloc(bufsize, GFP_KERNEL)) == NULL) {
+		printk(DEVICE_NAME " : Memory allocatioin error\n");
+		return -ENOMEM;
+	}
+
+	
+	return 0;
+}
+
+static void device_exit(void)
+{
+	int ret;
+	printk("Unloading Mini Buffer Module\n");
+
+	if ( (ret = unregister_chrdev(major, DEVICE_NAME)) < 0) {
+		printk(DEVICE_NAME " : Device unregistration failed (%d)\n", ret);
+	}
+	
+	if (strbuf != NULL) {
+		kfree(strbuf);
+		strbuf = NULL;
+		bufsize = 0;
+	}
+		
+}
+
+/*
+ * Device operation
+ */
+
+int device_open(struct inode *inode, struct file *filp)
+{
+	printk(DEVICE_NAME " : Device open (%d, %d)\n", MAJOR(inode->i_rdev),
+				 MINOR(inode->i_rdev));
+	
+	if (try_module_get(THIS_MODULE) == 0) {
+		printk(DEVICE_NAME " : Device is not loaded\n");
+		return -ENODEV;
+	}
+
+	if ( ((filp->f_flags & O_ACCMODE) & (O_WRONLY | O_RDWR)) != 0) {
+		write_open++;
+		printk(DEVICE_NAME " : Device is opened for writing\n");
+		printk(DEVICE_NAME " : Writing open count = <%d>\n", write_open);
+	/* If the device is opened for only reading */
+	} else {
+		if (read_open != 0) {
+			printk(DEVICE_NAME " : Device already open for reading\n");
+			return -EBUSY;
+		} else
+			read_open++;
+	}
+		
+		
+	open_count++;
+	printk(DEVICE_NAME " : Device open counter = %d\n", open_count);
+	
+
+	return 0;
+}
+
+int device_release(struct inode *inode, struct file *filp)
+{
+	printk(DEVICE_NAME " : Device is released (%d, %d)\n",
+				 MAJOR(inode->i_rdev), MINOR(inode->i_rdev) );
+
+	
+	if (open_count == 0) {
+		printk(DEVICE_NAME " : Device has not opened\n");
+		return -EINVAL;
+	}
+
+	if ( ((filp->f_flags & O_ACCMODE) & (O_WRONLY | O_RDWR)) != 0)
+	 	write_open--;
+	else
+		read_open--;
+
+	open_count--;
+
+	printk(DEVICE_NAME " : Device open counter = %d\n", open_count);
+	module_put(THIS_MODULE);
+
+	return 0;
+}
+
+ssize_t device_read(struct file *filp, char *buffer, size_t length,
+										loff_t *offset)
+{
+	int count = 0;
+
+	if (is_buffer_empty() ) {
+		printk(DEVICE_NAME " : Read return EOF\n");
+		return 0;
+	}
+
+	while ( is_buffer_empty() == 0 && length > 0) {
+		read_buffer_char(buffer);
+		
+		/* */
+		//printk(DEVICE_NAME " DEBUG: read=<%c>, length=<%d>, count=<%d>\n",
+		//			 *buffer, length, count);
+		
+		buffer++;
+		length--;
+		count++;
+
+		//wake_up_interruptible(&write_wait_queue);
+		
+	}
+
+
+	/* 
+	 * Don't change filp directly 
+	 * If offset is changed, filp is also changed by kernel after read/write function ends
+	 */
+	*offset -= count;
+	
+	printk(DEVICE_NAME " : Read %d bytes\n", count);
+	//printk(DEVICE_NAME " : File position = %d\n", (unsigned int)filp->f_pos);
+	printk(DEVICE_NAME " : Offset = %d\n", (int)*offset);
+
+	return count;
+}
+	
+
+ssize_t device_write(struct file *filp, const char *buffer, size_t length,
+										 loff_t *offset)
+{
+	int count = 0;
+
+	if (is_buffer_full() != 0) {
+		printk(DEVICE_NAME " : No space to write\n");
+		return -ENOMEM;
+		//printk(DEVICE_NAME " : Writing go to sleep\n");
+		//interruptible_sleep_on(&write_wait_queue);
+		//printk(DEVICE_NAME " : Writing wake up\n");
+	}
+
+	while (is_buffer_full() == 0 && length > 0) {
+		write_buffer_char ( (char *)buffer);
+		buffer++;
+		length--;
+		count++;
+	}
+
+	/* 
+	 * Don't change filp directly 
+	 * If offset is changed, filp is also changed by kernel after read/write function ends
+	 */
+	*offset += count;
+
+	printk(DEVICE_NAME " : Write %d bytes\n", count);
+	//printk(DEVICE_NAME " : File position = %d\n", (unsigned int)filp->f_pos);
+	printk(DEVICE_NAME " : Offset = %d\n", (int)*offset);
+
+	return count;
+	
+}
+
+/*
+ * Buffer management
+ */
+int is_buffer_empty(void)
+{
+	if (buf_pos == buf_end)
+		return 1;
+	else
+		return 0;
+}
+
+int is_buffer_full(void)
+{
+	int pos = buf_end + 1;
+
+	if (pos == bufsize)
+		pos = 0;
+
+	if (pos == buf_pos)
+		return 1;
+	else
+		return 0;
+}
+
+int read_buffer_char(char *buffer)
+{
+	// if there is data in buffer
+	if (is_buffer_empty() == 1)
+		return -1;
+	
+	// copy one byte data to user space
+	put_user(strbuf[buf_pos], buffer);
+
+	// proceed first data position
+	buf_pos++;
+	if (buf_pos == bufsize)
+		buf_pos = 0;
+
+	return 0;
+}
+
+int write_buffer_char(char *buffer)
+{
+	// if there is a space to write data
+	if (is_buffer_full() == 1)
+		return -1;
+
+	// copy one byte from user space
+	get_user(strbuf[buf_end], buffer);
+
+	// proceed last data position
+	buf_end++;
+	if (buf_end == bufsize)
+		buf_end = 0;
+
+	return 0;
+}
+
+
+
+
+
+module_init(device_init);
+module_exit(device_exit);
+
+MODULE_LICENSE("Dual BSD/GPL");
+
+
+
+}}}
+
+---- 
+ * test_app.c
+ 
+{{{
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+
+int main(void)
+{
+  int fd;
+  int ret;
+  char test_buf1[] = "I am a boy"; // 10 bytes
+  char test_buf2[] = "You are a girl";  // 14 bytes
+  char test_buf3[] = "qwertyuiop[]asdfghjkl;'zxcvbnm,./1234567890-"; //44
+
+  char read_buf[1024];
+  
+  if ( (fd = open("/dev/minibuf", O_RDWR) ) < 0) {
+    perror("/dev/minibuf open error\n");
+    return -1;
+  }
+
+
+  ret = write(fd, test_buf1, strlen(test_buf1));
+  
+  if (ret != strlen(test_buf1) ) {
+    printf("Writing \"%s\" is fail\n", test_buf1);
+    goto END_MAIN;
+  }
+
+  ret = write(fd, test_buf2, strlen(test_buf2));
+  
+  if (ret != strlen(test_buf2) ) {
+    printf("Writing \"%s\" is fail\n", test_buf2);
+    goto END_MAIN;
+  }
+
+  ret = write(fd, test_buf3, strlen(test_buf3));
+  
+  if (ret != strlen(test_buf3) ) {
+    printf("Writing \"%s\" is fail\n", test_buf3);
+    goto END_MAIN;
+  }
+
+
+  do {
+    ret = read(fd, read_buf, 10);
+    read_buf[ret] = '\0';
+
+    if (ret > 0) {
+      printf("%d bytes are read = <%s>\n", ret, read_buf);
+    } else {
+      printf("Return <%d>", ret);
+      perror("EOF\n");
+      goto END_MAIN;
+    }
+
+  } while (1);
+
+END_MAIN:
+
+  close(fd);
+
+  return 0;
+}
+
+// end
+}}}
+ 
+
+
+----
+ * 테스트 실행 결과 : 버퍼 사이즈를 크게 하면 모든 데이터를 한번에 저장할 수 있다.
+
+
+{{{
+root@gioserver: step4# insmod minibuf.ko bufsize=128
+root@gioserver: step4# gcc test_app.c
+root@gioserver: step4# ./a.out
+10 bytes are read = <I am a boy>
+10 bytes are read = <You are a >
+10 bytes are read = <girlqwerty>
+10 bytes are read = <uiop[]asdf>
+10 bytes are read = <ghjkl;'zxc>
+10 bytes are read = <vbnm,./123>
+8 bytes are read = <4567890->
+EOF
+: Success
+Return <0>root@gioserver: step4# rmmod minibuf
+root@gioserver: step4# insmod minibuf.ko bufsize=16
+root@gioserver: step4# ./a.out &
+[1] 5093
+Writing "You are a girl" is fail
+root@gioserver: step4# cat /dev/minibuf
+I am a boyYou acat: /dev/minibuf: Invalid argument
+[1]+  Done                    ./a.out
+root@gioserver: step4# cat /dev/minibuf
+root@gioserver: step4#
+
+}}}
+
+
+== step 5 ==
+
+----
+'''저자:''' 김기오 (http://www.asmlove.co.kr) 
+
+'''작성 시작:''' 2006-7-4
+
+----
+'''References:''' 

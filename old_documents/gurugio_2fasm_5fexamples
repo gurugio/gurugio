@@ -1,0 +1,1795 @@
+
+'''예제 코드만 적었습니다. 코드 해설은 굳이 필요가 없을것 같습니다.'''
+
+
+[[TableOfContents]]
+
+
+= 16비트 MASM 예제 =
+
+
+
+{{{
+;=============================================================================
+;     문자열 두개를 이어붙여서 ASCZ 문자열을 만든다.
+;
+;     인자 : 스트링1의 세그먼트, 스트링1의 오프셋, 스트링2의 세그먼트, 스트링2의 오프셋, 버퍼의 세그먼트, 버퍼의 오프셋
+;     리턴 :
+;
+;     2002. 3. 22 By Gurugio
+;=============================================================================
+    
+ CatString    proc    far, A_DataSeg1:word, A_StrArr1:word, A_DataSeg2:word, A_StrArr2:word, A_BufferSeg:word, A_pBuffer:word
+    push ds           ;protect segment register
+    push es
+
+    mov di, A_pBuffer
+    mov es, A_BufferSeg
+    
+    mov ds, A_DataSeg1          ;count first string
+    mov bx, A_StrArr1
+    .WHILE byte ptr ds:[bx] != 0      
+        mov dl, byte ptr ds:[bx]
+        mov byte ptr es:[di], dl
+        inc di
+        inc bx    
+    .ENDW
+
+    mov ds, A_DataSeg2          ;set second string
+    mov bx, A_StrArr2
+    .WHILE byte ptr ds:[bx] != 0
+        mov dl, byte ptr ds:[bx]      ;enter second string into first
+        mov byte ptr es:[di], dl
+        inc bx                  ;increase pointer
+        inc di
+    .ENDW
+
+    mov byte ptr es:[di], 0       ;ending condition zero
+
+    pop es
+    pop ds
+    ret
+ CatString      endp
+
+
+;===============================================================================
+;     문자열의 길이를 샌다.
+;
+;     인자 : 문자열 세그먼트, 문자열 오프셋
+;     리턴 : ax
+;
+; 2001. 3. 21  by Gurugio
+;===============================================================================
+
+ CountString      proc      far, ddseg:word, StrArr_a:word
+    push ds
+    push es
+
+    xor ax, ax          ;init count number
+    mov es, ddseg       ;init data segment in es
+    mov bx, StrArr_a    ;init offset (addressing mode with bx)
+    .WHILE byte ptr es:[bx] != 0      ;count string till end condition
+        inc bx            ;increase pointer and counter
+        inc ax
+    .ENDW
+
+    pop es
+    pop ds
+    ret
+ CountString      endp    
+
+
+;===============================================================================
+;     밀리 초 단위로 지정한 시간동안 대기하는 함수
+;
+;     인자 : 밀리 초 단위 시간
+;     리턴 : 
+;
+; 2001. 2. 28  by Gurugio
+;===============================================================================
+
+
+DelayMSecond    proto   far, :word    ;밀리 초단위로 대기
+
+
+;delay for several mili second to inputed
+;인자 : 밀리 세컨드 단위 초
+;time-of-day를 읽어서 밀리 초로 변환   
+ DelayMSecond proc    far, A_SecTime:word
+    LOCAL TV_InitTime:word
+    LOCAL TV_DelayTime:word
+    
+    push ds
+    push es
+    
+    ;밀리 초를 틱 단위로 변환
+    xor dx, dx
+    mov ax, 2
+    mul A_SecTime
+    mov TV_DelayTime, ax
+
+    ;초기 시간
+    mov ax, 40h
+    mov es, ax
+    mov bx, 6ch
+    mov dx, word ptr es:[bx]
+    mov TV_InitTime, dx
+    
+    ;현재 시간 - 초기 시간 = 대기 시간 ???
+    mov cx, 1
+    .while cx > 0
+        mov dx, word ptr es:[bx]
+        sub dx, TV_InitTime
+        mov cx, TV_DelayTime
+        sub cx, dx
+    .endw
+    
+    pop es
+    pop ds
+    
+    ret
+    
+ DelayMSecond endp
+
+
+;===============================================================================
+;     비트맵으로 구성된 그림을 비디오 메모리에 직접 그린다.
+;     해상도 300 X 240 비디오 모드 13번 에서 작동한다
+;   투명 모드를 0으로 하면 색을 0으로 비트맵을 그린다. -> 지우는 효과
+;
+;     인자 : 비트맴 데이터의 세그먼트, 데이터의 오프셋, X 좌표, Y 좌표, X 크기, Y 크기, 투명모드
+;     리턴 : 
+;
+; 2001. 3. 32  by Gurugio
+;===============================================================================
+
+
+
+ PaintSprite     proto     far, :word, :word, :word, :word, :word, :word, :byte
+
+
+ PaintSprite      proc      far, A_SpriteSeg:word, A_SpriteData:word, A_PointX:word, A_PointY:word \
+                                          , A_Xsize:word, A_Ysize:word, A_Dit:byte
+        local SizeSprite:word, NextLine:word
+
+        push ds
+        push es
+
+        ;비디오 버퍼의 시작입니다.
+        mov ax, 0A000h
+        mov ds, ax
+
+        ;스프라이트의 세그먼트
+        mov ax, A_SpriteSeg
+        mov es, ax
+
+        ;다음줄로 넘어가기 위해 더해야 하는 수
+        mov ax, 320
+        sub ax, A_Xsize
+        mov NextLine, ax
+
+        mov ax, A_Xsize
+        mul A_Ysize
+        mov SizeSprite, ax
+
+        ;; 폰트의 첫 픽셀을 그리는 시작 점입니다.
+    ;mov si, 320*A_PointY+A_PointX
+        mov   ax , 320
+        mul   A_PointY
+        add   ax , A_PointX
+        mov   si , ax
+
+        ;폰트의 시작점
+        mov di, A_SpriteData
+
+        ;;첫 점에서 부터 한줄을 그립니다.
+ LOOP1:
+        ;한 가로로 그리는 선의 길이
+        mov cx, A_Xsize
+ LOOP2:
+        ;버퍼에 색지정을 한다.       
+    xor ax, ax
+    ;투명 모드이면 색 지정을 건너뛰어서 색이 0이 된다.
+    ;투명 모드가 아니면 색 지정 
+    .if A_Dit==1
+            mov al, byte ptr es:[di]
+        .endif
+        mov byte ptr ds:[si], al
+
+        inc si
+        inc di
+        loop LOOP2
+
+
+    ;다음줄로 이동하게 더한다.
+    ;add si, 320-(x'-x)
+        add si, NextLine
+
+        ;마지막 줄까지 출력했는지 검사
+        mov ax, SizeSprite
+        cmp di, ax
+
+    ;아직 마지막 줄이 아니면 다시 그리는 곳으로 점프
+        jl LOOP1
+
+
+        pop es
+        pop ds
+        ret
+ PaintSprite    endp
+
+
+;===============================================================================
+;     수직 혹은 수평 직선을 그린다.
+;     수직 모드가 설정되면 수직선을 그리고 클리어되면 수평선을 그린다.
+;
+;     인자 : X 좌표. Y 좌표, 직선 길이, 색, 수직모드
+;     리턴 : ax
+;
+; 2001. 2. 28  by Gurugio
+;===============================================================================
+
+
+ DrawLineHV13h       proc far, A_x:sword,A_y:sword,A_LineSize:sword,A_Color:byte,A_Vertical:byte
+    local Tv_DrawAdr  :word,
+    Tv_PosX     :sword,
+    Tv_PosY     :sword,
+    Tv_DrawSize :sword,
+    Tv_Result   :word
+
+    ;protect register
+    push ds
+    push es
+
+    ;set segment
+    mov   ax , E_VideoSeg
+    mov   es , ax
+
+    ;set enviroment
+    mov   Tv_Result , FALSE
+    mov   ax , A_x
+    mov   bx , A_y
+    mov   cx , A_LineSize
+    mov   Tv_PosX , ax        ;calculate variable set
+    mov   Tv_PosY , bx
+    mov   Tv_DrawSize , cx
+    ;-------------------
+    ;patch drawable rect
+    .if (Tv_PosX < 0 )&&(A_Vertical == FALSE)
+        mov   ax , Tv_PosX      ;in negative value patch
+        neg   ax
+        sub   Tv_DrawSize , ax
+    .endif
+    .if (Tv_PosY < 0 )&&(A_Vertical == TRUE)
+        mov   ax , Tv_PosY      ;in negative value patch
+        neg   ax
+        sub   Tv_DrawSize , ax
+      .endif
+    .if (A_Vertical == FALSE)
+        mov   ax , Tv_DrawSize      ;overflow size patch
+        
+        .if (Tv_PosX >0)
+            add   ax , Tv_PosX
+        .endif
+        
+        .if (sword ptr ax > E_ScrSizeX)
+            sub   ax , E_ScrSizeX
+            sub   Tv_DrawSize , ax
+        .endif
+    .endif
+
+    .if (A_Vertical == TRUE)
+        mov   ax , Tv_DrawSize      ;overflow size patch
+        .if (Tv_PosY >0)
+            add   ax , Tv_PosY
+        .endif
+        
+        .if (sword ptr ax > E_ScrSizeY)
+            sub   ax , E_ScrSizeY
+            sub   Tv_DrawSize , ax
+        .endif
+    .endif
+
+    ;when drawable then draw
+    .if (Tv_DrawSize > 0)
+        .if (A_Vertical == TRUE)
+        ;vertical line draw
+            .if (Tv_PosX >= 0)&&(Tv_PosX < E_ScrSizeX)&&(Tv_PosY < E_ScrSizeY)
+            ;calculate address
+                .if (Tv_PosY < 0)
+                    mov   Tv_PosY , 0
+                .endif
+
+                mov   ax , E_ScrSizeX
+                mul   Tv_PosY
+                add   ax , Tv_PosX
+                mov   Tv_DrawAdr , ax
+                ;draw line
+                mov   cx , Tv_DrawSize
+                mov   bx , Tv_DrawAdr
+                mov   al , A_Color
+                .repeat
+                mov   byte ptr es:[bx] , al
+                add   bx , E_ScrSizeX
+                .untilcxz
+                mov   Tv_Result , TRUE    ;success!!
+            .endif
+        .else
+        ;horizontal line draw
+            .if (Tv_PosX < E_ScrSizeX)&&(Tv_PosY >= 0)&&(Tv_PosY < E_ScrSizeY)
+                ;calculate address
+                .if (Tv_PosX < 0)
+                    mov   Tv_PosX , 0
+                .endif
+                mov   ax , E_ScrSizeX
+                mul   Tv_PosY
+                add   ax , Tv_PosX
+                mov   Tv_DrawAdr , ax
+                ;draw line
+                mov   cx , Tv_DrawSize
+                mov   di , Tv_DrawAdr
+                mov   al , A_Color
+                cld
+                rep   stosb
+                ;set result
+                mov   Tv_Result , TRUE    ;success!!
+            .endif
+        .endif
+    .endif
+
+    ;restore register
+    pop ds
+    pop   es
+
+    ret
+
+ DrawLineHV13h       endp
+
+
+;===============================================================================
+;     사각형을 비디오 메모리에 직접 그린다.
+;     해상도 300 X 240 비디오 모드 13번 에서 작동한다
+;   투명 모드를 0으로 하면 색을 0으로 사각형을 그린다. -> 지우는 효과
+;
+;     인자 : X 좌표, Y 좌표, X 크기, Y 크기, 투명모드
+;     리턴 : 
+;
+; 2001. 3. 32  by Gurugio
+;===============================================================================
+
+ PaintRec   proto far, :word, :word, :word, :word, :byte, :byte
+ 
+ PaintRec   proc far, A_X:word, A_Y:word, A_SizeX:word, A_SizeY:word, A_Color:byte, A_Dit:byte
+    push  ds
+
+    ;비디오 세그맨트를 설정합니다.
+    mov   ax , 0A000h
+    mov   ds , ax
+
+    ;이제 점을 그릴 주소를 계산합니다.
+    mov   ax , 320    ;화면x크기
+    mul   A_Y
+    add   ax , A_X    ;그리기 시작할 주소 계산
+    mov   di , ax
+
+    xor ax, ax
+    .if A_Dit!=0
+        ;박스그리기는 x크기만큼의 수평선을 y크기횟수만큼 그려주면 됩니다.
+        mov   al , A_Color    ;우선 색값을 얻어놓고
+    .endif
+
+    mov   dx , 320
+    sub   dx , A_SizeX    ;스크린 크기 - 박스의 x크기
+    mov   cx , A_SizeY    ;y크기만큼 루프를 돌립니다.
+ L_LoopY:
+    push  cx      ;y카운트를 보존합니다.
+    ;이제 수평선을 그립니다. ^^
+    mov   cx , A_SizeX    ;박스의 x크기만큼 x방향으로 점을 찍음
+ L_LoopX:
+    mov   ds:[di] , al    ;지정한 색상으로 점을 찍음 이렇게 변수명없이 레지스터만으로
+    ;간접주소 지정할때에는 반드시 세그맨트 프리픽스를 붙여줘야
+    ;합니다.
+    inc   di              ;다음 위치로..
+    loop  L_LoopX         ;박스 x크기만큼 반복
+
+    pop   cx      ;y카운트를 복원합니다.
+    add   di , dx ;x 수평선을 그리고 나면 현자 가리키는 주소값은
+    ;x의 시작점에서 박스 수평크기만큼 오른쪽으로 이동한
+    ;상태이므로 다음라인으로 가기 위해선 화면 X크기 - 박스 X크기만큼의
+    ;주소를 더해주면 됩니다. 아까 위에서 dx레지스터에 미리 계산해 놨었죠?^^
+    loop  L_LoopY ;y카운트 만큼 루프를 돕니다.
+
+
+    ;레지스터 환원
+    pop   ds
+
+    ret
+
+ PaintRec    endp
+
+
+
+
+;-----------------------------------------------------------
+;use interrupt intercept therefore
+;compute sum of di and si and store ax
+;original vector table is 6dh
+;-----------------------------------------------------------
+
+
+.286
+
+dseg segment para
+
+OldVectorCS   word    ?       ;original Vector table
+OldVectorIP   word    ?
+
+dseg ends
+
+stack segment stack
+stk byte  1024 dup ("stack   ")
+stack ends
+
+
+cseg  segment para
+      assume  cs:cseg, ds:dseg
+
+
+;BAckup original vector table
+StoreOldVector    proc    near
+      assume cs:cseg, ds:dseg
+      mov ax, dseg
+      mov ds, ax
+
+      xor bx, bx
+      mov es, bx
+      mov   ax, word ptr es:[01b4h]     ;IP=6dh*4
+      mov   OldVectorIP, ax
+      mov   ax, word ptr es:[01b4h+2]   ;CS=6dh*4+2
+      mov   OldVectorCS, ax
+      ret
+StoreOldVector    endp
+
+;Set Vector user procedure
+ResetVector     proc    near
+      push ds
+
+      assume cs:cseg, ds:dseg
+      mov ax, dseg
+      mov ds, ax
+
+      xor ax, ax
+      mov ds, ax
+      lea   bx, MainProc
+      mov   word ptr ds:[01b4h], bx
+      mov   word ptr ds:[01b4h+2], cs
+
+      pop ds
+      ret
+ResetVector endp
+
+;set vector original vector table
+BackupOldVector   proc  near
+      push ds
+      push ax
+
+      assume cs:cseg, ds:dseg
+      mov ax, dseg
+      mov ds, ax
+
+      xor ax, ax
+      mov ds, ax
+      mov ax, OldVectorIP
+      mov word ptr ds:[01b4h], ax
+      mov ax, OldVectorCS
+      mov word ptr ds:[01b4h+2], ax
+      pop ax
+      pop ds
+      ret
+BackupOldVector   endp
+
+
+;user procedure
+;store sum of di, si to ax
+MainProc    proc    near
+      mov dl, 30h
+      mov ah, 2h
+      iret
+MainProc    endp
+
+
+Main  proc
+      mov ax, dseg
+      mov ds, ax
+
+      push ax
+      call StoreOldVector
+      call ResetVector
+      pop ax
+      
+      int 6dh
+
+      int 21h
+
+      call BackupOldVector
+
+      mov ah,4ch
+      int  21h
+
+Main  endp
+cseg  ends
+
+      end Main
+
+
+
+;===============================================================================
+;     ASCZ 문자열을 출력한다.
+;     도스 인터럽트 21h - 2번 사용
+;
+;     인자 : 밀리 초 단위 시간
+;     리턴 : ax
+;
+; 2002. 3. 22  by Gurugio
+;===============================================================================
+ PrintString      proc      far, ddseg:word, StrArr_b:word
+    push ds
+    push es
+    
+    mov ax, 0200h         ;This make "int 21h" possible
+
+    mov es, ddseg         ;store address of string
+    mov bx, StrArr_b
+    .WHILE byte ptr es:[bx] != 0      ;loop till NULL condition
+        mov dl, byte ptr es:[bx]
+        int 21h           ;print one character
+        inc bx            ;next point
+    .ENDW
+
+    pop es
+    pop ds
+    ret
+PrintString     endp
+
+
+
+}}}
+
+
+
+
+= 32비트 MASM 예제 =
+
+
+1. DWORD의 배열내에서 특정 DWORD 값을 찾아 포인터를 얻어내는 함수 (MASM)
+
+2. 특정 영역을 지정한 BYTE 로 채우기 (MASM)
+
+3. 지정한 메모리 영역을 복사 (MASM)
+
+4. AscZ 문자열 크기 알아내기
+
+ml /c /coff /Zi ~~.asm 
+
+
+{{{
+ 
+.386
+.model flat, stdcall
+option casemap:none
+include \masm32\include\windows.inc
+include \masm32\include\kernel32.inc
+include \masm32\include\user32.inc
+includelib \masm32\lib\user32.lib
+includelib \masm32\lib\kernel32.lib
+
+
+
+Main proto
+StringLengthAscz   proto   :dword
+CopyMem2Mem         proto   :dword, :dword, :dword, :dword
+WriteByte2Mem      proto   :dword, :byte, :dword
+FindDwDataInArray   proto   :dword, :dword, :dword
+
+
+
+.data
+MsgCaption      db "Iczelion's tutorial no.2",0
+buffer         byte 256 dup (0)
+dwSrc         dword 12345
+dwDest         dword 0
+dwArray         dword 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+
+
+.data?
+
+
+.code
+start:
+   Main proc
+
+
+      invoke StringLengthAscz, addr MsgCaption
+      
+      invoke WriteByte2Mem, addr buffer, 71, eax
+      
+      
+      ;invoke MessageBox, NULL,addr buffer, addr buffer, MB_OK
+      
+      invoke FindDwDataInArray, addr dwArray, 11, 12
+      
+      invoke CopyMem2Mem, addr MsgCaption, addr buffer, eax, sizeof(dword)
+      
+      ;invoke MessageBox, NULL,addr buffer, addr buffer, MB_OK
+      
+      
+      invoke ExitProcess,NULL
+
+   Main endp
+
+   FindDwDataInArray      proc      A_ptrArray:dword, A_ArraySize:dword, A_Data:dword
+      push esi
+      push edi
+      push ebx
+      
+      mov esi, A_ptrArray
+      mov ecx, A_ArraySize
+      
+      .while ecx != 0
+         mov edx, dword ptr [esi]
+         .if edx == A_Data
+            mov eax, esi
+            pop ebx
+            pop edi
+            pop esi
+            ret
+         .endif
+         dec ecx
+         add esi, sizeof(dword)
+      .endw
+         
+      mov eax, -1
+      
+      
+      pop ebx
+      pop edi
+      pop esi
+      ret
+   FindDwDataInArray      endp
+
+   WriteByte2Mem         proc      A_ptrMem:dword, A_byteData:byte, A_MemSize:dword
+      push esi
+      push edi
+      push ebx
+      
+      mov esi, A_ptrMem
+      mov ecx, A_MemSize
+      mov dl, A_byteData
+      
+      .while ecx != 0
+         mov byte ptr [esi], dl
+         dec ecx
+         inc esi
+      .endw
+      
+      
+      pop ebx
+      pop edi
+      pop esi
+      ret
+   WriteByte2Mem         endp
+
+   StringLengthAscz      proc      A_ptrArray:dword
+      push esi
+      push edi
+      push ebx
+      
+      xor eax, eax
+      
+      mov esi, A_ptrArray
+
+      .while byte ptr [esi] != 0
+         inc eax
+         inc esi
+      .endw
+      
+      pop ebx
+      pop edi
+      pop esi
+      ret
+   StringLengthAscz      endp
+
+
+   CopyMem2Mem            proc      A_ptrSrc:dword, A_ptrDest:dword, A_dwSrcSize:dword, A_dwDestSize:dword
+         push esi
+         push edi
+         push ebx
+         
+         mov edx, A_dwDestSize
+         .if A_dwSrcSize < edx
+            mov eax, -1
+            ret
+         .endif
+         
+         
+         mov ecx, A_dwSrcSize
+         mov esi, A_ptrSrc
+         mov edi, A_ptrDest
+         xor eax, eax
+         
+         
+         .while ecx != 0
+            mov dh, byte ptr [esi]
+            mov byte ptr [edi], dh
+            inc esi
+            inc edi
+            dec ecx
+            inc eax
+         .endw
+         
+         
+         pop ebx
+         pop edi
+         pop esi
+         ret
+   CopyMem2Mem            endp
+
+end start 
+
+}}}
+
+
+
+{{{
+
+ 
+.586
+.model flat, stdcall
+option casemap:none
+include \masm32\include\windows.inc
+include \masm32\include\kernel32.inc
+include \masm32\include\user32.inc
+includelib \masm32\lib\user32.lib
+includelib \masm32\lib\kernel32.lib
+
+
+
+Main proto
+
+DtCopyMemory      proto   :dword, :dword, :dword
+
+
+DtGetStrLength      proto   :dword
+
+DtSetMem2Byte      proto   :dword, :dword, :byte
+
+DtSearchDW         proto   :dword, :dword, :dword
+
+
+
+.data
+buffer         byte 255 dup (0)
+MsgCaption      db "Iczelion's tutorial no.12345678",0
+
+
+
+dwSrc         dword 12345
+dwDest         dword 0
+dwArray         dword 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+
+
+.data?
+
+
+.code
+start:
+   Main proc
+
+      invoke DtGetStrLength, addr MsgCaption
+      
+      ;invoke DtCopyMemory, addr MsgCaption, addr buffer, eax
+      
+      
+      
+      ;mov eax, 11
+      ;invoke DtSetMem2Byte, addr buffer, eax, 71
+      
+      
+      ;invoke MessageBox, NULL,addr buffer, addr buffer, MB_OK
+      
+      ;invoke DtSearchDW, addr dwArray, 11, 12
+      
+      
+      
+      invoke MessageBox, NULL,addr buffer, addr buffer, MB_OK
+      
+      
+      invoke ExitProcess,NULL
+
+   Main endp
+
+
+
+
+   DtSearchDW      proc      A_ptrArray:dword, A_ArraySize:dword, A_Data:dword
+      push ebx
+      push edi
+      
+      mov edi, A_ptrArray      ; 배열의 시작 주소
+      mov ecx, A_ArraySize   ; 배열의 개수
+      
+
+      cld
+      mov eax, A_Data         ; 찾아낼 값
+
+      mov edx, edi
+      mov ebx, ecx
+      
+      repne scasd
+      
+      sub edi, 4      
+      ; 배열을 전부 검색해도 원하는 값이 없다면 -1을 반환
+      .if ecx == 0
+         mov edx, dword ptr [edi]
+         .if edx != eax
+            mov eax, -1
+            ret
+         .endif
+      .endif
+
+      
+      ; 워하는 값을 찾았으면 그 주소 반환
+      mov eax, edi
+      
+      pop edi
+      pop ebx
+      ret
+   DtSearchDW      endp
+
+
+
+
+   DtSetMem2Byte         proc      A_ptrMem:dword, A_MemSize:dword, A_byteData:byte
+      push edi
+      push ebx
+      
+      mov edi, A_ptrMem
+      mov ecx, A_MemSize
+      mov al, A_byteData
+      
+      
+      ; 앞대가리 크기를 알아야 한다.
+      ; 즉, 여기서 esi에 몇바이트를 더해야 메모리 주소가 4로 정렬되는지 알수있다.
+      mov edx, edi
+      and edx, 3      ;
+      mov ebx, 4
+      sub ebx, edx   ; 4에서 빼면 eax 에 앞대가리의 크기
+
+         
+
+      sub ecx, ebx   ; 총 크기에 앞대가리 크기 빼기
+         
+      ; 총 크기를 edx에 저장해놓고
+      ; 앞대가리의 크기를 카운트한다.
+      mov edx, ecx
+      mov ecx, ebx
+         
+
+      ; 앞대가리 복사
+      rep stosb
+         
+
+      ; 이제 남은 총 크기를 ecx에 되돌려 놓는다.
+      mov ecx, edx
+
+         
+      ; 뒷대가리 크기를 알아낸다. => ebx에 저장한다.
+      ; 즉 4바이트씩 정렬한다음에 뒤 끝에 남겨지는 길이를 알아낸다.
+      mov ebx, edi   ; 지금 아직 복사가 안된 소스의 주소에 남겨진 길이를 더하면 끝의 주소가 나온다.
+      add ebx, edx
+      and ebx, 3      ; 4로 정렬된 주소에서 몇 바이트가 남겨지는지 알수있다.
+
+
+      ; ecx에 남겨진 소스의 길이가 들어있는데 뒷대가리의 길이를 빼면
+      ; ecx에 4의 배수의 크기가 들어있다.
+      sub ecx, ebx
+      shr ecx, 2      ; 더블 워드이므로 크기를 4로 나눈다.
+         
+      mov ah, al
+      mov dx, ax
+      shl edx, 16
+      or eax, edx
+         
+      ; 가운데 복사
+      rep stosd
+         
+      ; 뒷대가리 복사
+      ; 뒷대가리의 길이를 카운트해서 바이트 단위로 복사한다.
+      mov ecx, ebx
+      rep stosb
+      
+      
+      pop ebx
+      pop edi
+      ret
+   DtSetMem2Byte         endp
+
+
+
+   DtGetStrLength      proc      A_ptrArray:dword
+      push edi
+      
+      mov edi, A_ptrArray
+
+      xor eax, eax
+      cld
+
+      mov edx, edi
+      repne scasb
+      
+      
+      sub edi, edx
+      mov eax, edi
+      dec eax
+      
+
+      pop edi
+      ret
+   DtGetStrLength      endp
+
+
+
+   DtCopyMemory            proc      A_ptrSrc:dword, A_ptrDest:dword, A_dwSrcSize:dword
+      push esi
+      push edi
+      
+      cld         
+      mov ecx, A_dwSrcSize
+      
+      
+      mov esi, A_ptrSrc
+      mov edi, A_ptrDest
+      
+      
+      ; 앞대가리 크기를 알아야 한다.
+      ; 즉, 여기서 esi에 몇바이트를 더해야 메모리 주소가 4로 정렬되는지 알수있다.
+      mov edx, esi
+      and edx, 3      ;
+      mov eax, 4
+      sub eax, edx   ; 4에서 빼면 eax 에 앞대가리의 크기
+      
+      sub ecx, eax   ; 총 크기에 앞대가리 크기 빼기
+      
+      ; 총 크기를 edx에 저장해놓고
+      ; 앞대가리의 크기를 카운트한다.
+      mov edx, ecx
+      mov ecx, eax
+      
+      ; 앞대가리 복사
+      rep movsb
+      
+
+      ; 이제 남은 총 크기를 ecx에 되돌려 놓는다.
+      mov ecx, edx
+
+         
+      ; 뒷대가리 크기를 알아낸다.
+      ; 즉 4바이트씩 정렬한다음에 뒤 끝에 남겨지는 길이를 알아낸다.
+      mov eax, esi   ; 지금 아직 복사가 안된 소스의 주소에 남겨진 길이를 더하면 끝의 주소가 나온다.
+      add eax, edx
+      and eax, 3      ; 4로 정렬된 주소에서 몇 바이트가 남겨지는지 알수있다.
+
+      ; ecx에 남겨진 소스의 길이가 들어있는데 뒷대가리의 길이를 빼면
+      ; ecx에 4의 배수의 크기가 들어있다.
+      sub ecx, eax
+      shr ecx, 2      ; 더블 워드이므로 크기를 4로 나눈다.
+         
+      ; 가운데 복사
+      rep movsd
+         
+      ; 뒷대가리 복사
+      ; 뒷대가리의 길이를 카운트해서 바이트 단위로 복사한다.
+      mov ecx, eax
+      rep movsb
+         
+
+      pop edi
+      pop esi
+      ret
+   DtCopyMemory            endp
+
+
+end start 
+
+
+}}}
+
+
+= Win32 예제 =
+
+{{{
+.386
+.model flat,stdcall
+option casemap:none
+
+
+include \masm32\include\windows.inc
+include \masm32\include\user32.inc
+include \masm32\include\kernel32.inc
+include \masm32\include\comctl32.inc
+include \masm32\include\gdi32.inc
+include \masm32\INCLUDE\masm32.inc
+
+
+includelib \masm32\LIB\masm32.lib
+includelib \masm32\lib\gdi32.lib
+includelib \masm32\lib\comctl32.lib
+includelib \masm32\lib\user32.lib
+includelib \masm32\lib\kernel32.lib
+
+
+;===============================================================================
+WinMain             PROTO :DWORD,:DWORD,:DWORD,:DWORD
+
+;부모를 받아서 자식 항목을 집어 넣는 함수
+;인자 : 부모 트리의 핸들, 현재 항목의 텍스트, 윈도우 핸들
+InsertChild         PROTO :DWORD,:DWORD,:DWORD
+
+;트리뷰에 트리를 만드는 함수
+;인자 : 전체 경로의 이름, 현재 항목의 이름, 부모의 핸들, 윈도우의 핸들
+ShowAllFileList     PROTO :DWORD, :dword, :dword, :dword
+
+;선택된 항목의 절대 경로를 구하는 함수
+;인자 : 윈도우의 핸들, 선택된 항목의 핸들
+GetFullPath			proto :dword, :dword;, :dword
+
+;주어진 절대 경로의 폴더가 가지고 있는 모든 화일을 리스트뷰에 등록한다.
+;인자 : 리스트 뷰 윈도우의 핸들, 전체 경로의 핸들
+InsertListView		proto		:dword, :dword
+
+
+;===============================================================================
+.const
+    IDB_TREE    equ 4006
+;===============================================================================
+.data
+    ClassName           db "SimpleWinClass",0
+    AppName             db "TreeView 컨트롤 실습용 샘플예제 2가지",0
+    TreeViewClass       db "SysTreeView32",0
+    szRootDir           db "C:",0				;루트의 이름
+    szSpace             db " ",0				;스페이스 문자열
+	szWon             	db "\",0				;디렉토리 표시
+    szAllFiles          db "*.*",0				;모든 파일
+
+    slEdit              db "EDIT",0				;에디트 윈도우 등록
+    statClass           db "STATIC",0			;스테이틱 윈도우 등록
+    ListViewClass   db "SysListView32",0
+    NullByte            db 0    				;널 바이트
+
+
+    Tbl_Handle    		dword 256 dup (?)		;핸들 저장 테이블
+    CurrIndex	        dd 0					;현재 레벨
+    PrevIndex   	    dd 0					;전 아이템의 레벨
+
+    TreeDepth           dd 0					
+
+		
+		;===========================================================================
+		szTextBuffer			byte	256 dup (0)		;절대 경로 저장
+		TBL_hParent				dword	256 dup (?)		;부모의 핸들 저장
+
+	szColumn1				db "이름", 0				;첫번째 컬럼
+	szColumn2				db "크기", 0				
+	szColumn3				db "시간", 0
+
+
+	szMonth					db "월", 0
+	szDay					db "일", 0
+			
+
+.data?
+    hInstance           HINSTANCE ?
+    hwndTreeView        dd ?
+    hParent             dd ?
+    hImageList          dd ?
+    hDragImageList      dd ?
+
+    hBitmap             dd ?
+    hStatic1            dd ?			;스테이틱 창의 핸들
+    hEdit1              dd ?			;에디터 창의 핸들
+    hListView1			dd ?			;리스트 뷰의 핸들
+
+;===============================================================================
+.code
+start:
+    invoke GetModuleHandle, NULL
+    mov    hInstance,eax
+    invoke WinMain, hInstance,NULL,NULL, SW_SHOWDEFAULT
+    invoke ExitProcess,eax
+;===============================================================================
+WinMain proc hInst:HINSTANCE,hPrevInst:HINSTANCE,CmdLine:LPSTR,CmdShow:DWORD
+    LOCAL wc:WNDCLASSEX
+    LOCAL msg:MSG
+    LOCAL hwnd:HWND
+    mov   wc.cbSize,SIZEOF WNDCLASSEX
+    mov   wc.style, CS_HREDRAW or CS_VREDRAW
+    mov   wc.lpfnWndProc, OFFSET WndProc
+    mov   wc.cbClsExtra,NULL
+    mov   wc.cbWndExtra,NULL
+    push  hInstance
+    pop   wc.hInstance
+    mov   wc.hbrBackground,COLOR_WINDOW+1
+    mov   wc.lpszMenuName,NULL
+    mov   wc.lpszClassName,OFFSET ClassName
+    invoke LoadIcon,NULL,IDI_APPLICATION
+    mov   wc.hIcon,eax
+    mov   wc.hIconSm,eax
+    invoke LoadCursor,NULL,IDC_ARROW
+    mov   wc.hCursor,eax
+    invoke RegisterClassEx, addr wc
+    INVOKE CreateWindowEx,WS_EX_CLIENTEDGE,ADDR ClassName,ADDR AppName,\
+           WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,\
+           CW_USEDEFAULT,700,700,NULL,NULL,\
+           hInst,NULL
+    mov   hwnd,eax
+    invoke ShowWindow, hwnd,SW_SHOWNORMAL
+    invoke UpdateWindow, hwnd
+    .WHILE TRUE
+        invoke GetMessage, ADDR msg,NULL,0,0
+        .BREAK .IF (!eax)
+        invoke TranslateMessage, ADDR msg
+        invoke DispatchMessage, ADDR msg
+    .ENDW
+    mov     eax,msg.wParam
+    ret
+WinMain endp
+;===============================================================================
+WndProc proc hWnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
+        LOCAL Rc:RECT
+      	local	stNmTree		:NMTREEVIEW
+      	local	szItemName[30]	:byte
+      	local	stTvItem		:TV_ITEM
+      	LOCAL lc:LV_COLUMN
+      	LOCAL li:LV_ITEM
+
+      	
+        ;윈도우 발생의 메세지 처리
+        .IF uMsg==WM_CREATE
+           
+            ;트리 윈도우 창을 등록
+            invoke CreateWindowEx,WS_EX_CLIENTEDGE,ADDR TreeViewClass,NULL,\
+                    WS_CHILD+WS_VISIBLE+TVS_HASLINES+TVS_HASBUTTONS+TVS_LINESATROOT,\
+                    0,0,250,200,hWnd,NULL,hInstance,NULL
+            mov hwndTreeView,eax
+
+
+            invoke CreateWindowEx,WS_EX_STATICEDGE,ADDR statClass,addr NullByte,
+                          WS_BORDER or WS_CHILD or WS_VISIBLE or SS_LEFT or SS_CENTERIMAGE ,
+                          10,210,280,20,hWnd,0,hInstance,NULL
+            mov hStatic1,eax
+
+            invoke CreateWindowEx,WS_EX_CLIENTEDGE,ADDR slEdit,addr NullByte, \
+                WS_BORDER or WS_VISIBLE or WS_CHILDWINDOW or ES_AUTOHSCROLL or ES_NOHIDESEL,\
+                10,210,280,20,hWnd,0,hInstance,NULL
+            mov hEdit1, eax
+
+
+	        invoke CreateWindowEx,WS_EX_CLIENTEDGE, ADDR ListViewClass,0,
+	              WS_VISIBLE or WS_CHILD or \
+	              LVS_ALIGNLEFT or LVS_REPORT, \
+	              0,0,0,0,hWnd,0,hInstance,NULL
+	        mov hListView1, eax
+
+
+
+            ;이미지를 등록
+            invoke ImageList_Create,16,16,ILC_COLOR16,2,10
+            mov hImageList,eax
+
+
+            ;비트맵 읽기
+            invoke LoadBitmap,hInstance,IDB_TREE
+            mov hBitmap,eax
+
+            ;비트맵을 이미지로 처리
+            invoke ImageList_Add,hImageList,hBitmap,NULL
+            ;비트맵 디바이스 종료
+            invoke DeleteObject,hBitmap
+
+            ;이미지 리스트를 만드는 메세지 발생     
+            invoke SendMessage,hwndTreeView,TVM_SETIMAGELIST,0,hImageList
+
+			;컬럼의 속성 지정
+			mov lc.imask,LVCF_TEXT+ LVCF_FMT + LVCF_WIDTH  + LVCF_SUBITEM
+	        mov lc.fmt, LVCFMT_RIGHT
+			mov lc.lx, 150
+			
+			;첫 컬럼 등록
+			mov edx, offset szColumn1
+			mov lc.pszText, edx
+			mov lc.iSubItem, 0
+            invoke SendMessage, hListView1, LVM_INSERTCOLUMN, 0, addr lc
+
+			;둘번째 컬럼 등록
+			mov edx, offset szColumn2
+			mov lc.pszText, edx
+			mov lc.iSubItem, 1
+            invoke SendMessage, hListView1, LVM_INSERTCOLUMN, 1, addr lc
+            
+            ;세번째 컬럼 등록
+			mov edx, offset szColumn3
+			mov lc.pszText, edx
+			mov lc.iSubItem, 2
+            invoke SendMessage, hListView1, LVM_INSERTCOLUMN, 2, addr lc
+
+
+			;트리에 파일 구조 표시
+            invoke ShowAllFileList, addr szRootDir, addr szRootDir, NULL, hwndTreeView
+            
+            					
+
+        .ELSEIF uMsg==WM_SIZE
+            ;윈도우의 크기가 변한다면 TreeView의 크기도 윈도우의 크기에 맞추어 준다.
+            invoke GetClientRect,hWnd,ADDR Rc
+
+            sub Rc.bottom,40
+            invoke MoveWindow,hwndTreeView,0,0,300,Rc.bottom,TRUE
+            mov eax,Rc.right
+            sub eax,301
+            invoke MoveWindow,hListView1,301,0,eax,Rc.bottom,TRUE
+            invoke MoveWindow,hStatic1,0,Rc.bottom,Rc.right,20,TRUE
+            add Rc.bottom,20
+            invoke MoveWindow,hEdit1,0,Rc.bottom,Rc.right,20,TRUE
+
+		;마우스로 선택할때의 메세지  	
+  		.elseif uMsg == WM_NOTIFY
+  		
+			  		
+			mov		ebx,lParam
+			assume ebx:ptr NM_TREEVIEW
+			mov		eax,[ebx].hdr.hwndFrom
+
+			
+			;트리뷰의 아이템을 눌렀으면			
+			.if  eax == hwndTreeView
+	
+				;마우스 클릭
+				.if [ebx].hdr.code == TVN_SELCHANGED
+					;아이템의 속성			
+					mov		stTvItem.imask,TVIF_PARAM + TVIF_IMAGE + TVIF_TEXT
+
+					;찾게 될 아이템의 핸들을 저장
+					mov		eax,[ebx].itemNew.hItem
+					mov		stTvItem.hItem,eax
+
+					;찾게 될 아이템의 이름을 저장할 버퍼 지정
+					lea		eax,szItemName
+					mov		stTvItem.pszText, eax
+
+					mov		stTvItem.cchTextMax,30	;sizeof szItem---
+
+					;클릭한 아이템의 전체 속성을 얻어낸다.
+					invoke	SendMessage,hwndTreeView,TVM_GETITEM,0,addr stTvItem
+
+					;에디터 창에 이름을 표시한다.
+					invoke SetWindowText, hEdit1, addr  szItemName
+
+					;클릭한 아이템의 부모 아이템의 핸들을 얻는다.
+	                invoke SendMessage,hwndTreeView,TVM_GETNEXTITEM,TVGN_CARET,0					
+					
+					;루트 부터의 절대 경로를 얻는다.
+					invoke	GetFullPath, hwndTreeView, eax
+
+					;스테이틱 창에 전체 경로를 출력한다.
+					invoke SetWindowText, hStatic1, addr szTextBuffer
+					
+					;리스트 뷰 윈도우에 클릭한 아이템의 차일드를 출력한다.
+					invoke InsertListView, hListView1, addr szTextBuffer
+
+
+				.endif
+			.endif
+		assume ebx:NOTHING
+					
+        .ELSEIF uMsg==WM_DESTROY
+            invoke PostQuitMessage,NULL
+        .ELSE
+            invoke DefWindowProc,hWnd,uMsg,wParam,lParam        
+            ret
+        .ENDIF
+        xor eax,eax
+        ret
+WndProc endp
+;===============================================================================
+
+
+InsertChild proc    A_hParent:dword, A_ChildText:dword, hTreeV:dword
+        LOCAL tv:TV_INSERTSTRUCT
+        
+        push esi
+        push edi
+        push ebx
+
+
+        
+        ;현재 트리의 레벨이 루트인가를 검사한다.
+        
+        .if A_hParent==0                            ;루트일때
+            mov tv.hInsertAfter, TVI_ROOT
+            mov tv.hParent, 0
+        .else                                       ;루트가 아닐때
+            mov tv.hInsertAfter, TVI_SORT   
+            mov eax, A_hParent                          ;지금의 부모를 계속 사용한다.
+            mov tv.hParent, eax
+        .endif
+
+
+        ;현재 트리의 이름
+        mov ebx, A_ChildText
+        mov tv.item.pszText, ebx                ;폴더의 이름을 지정
+
+        ;아이템의 성격을 지정한다.
+        mov tv.item.imask,TVIF_TEXT+TVIF_IMAGE+TVIF_SELECTEDIMAGE
+        mov tv.item.iImage,0
+        mov tv.item.iSelectedImage,1
+
+        ;트리 아이템 출력
+        invoke SendMessage,hTreeV,TVM_INSERTITEM,0,addr tv
+
+        pop ebx
+        pop edi
+        pop esi
+
+        ret
+InsertChild endp
+
+
+;===============================================================================
+
+ShowAllFileList     proc        A_pFullFileName:dword, A_pFileName:dword, A_hParent:dword, A_hwndTree:dword
+        LOCAL   TV_fd:WIN32_FIND_DATA
+        LOCAL   TV_hFile:HANDLE
+        LOCAL   TV_TempM[256]:byte
+        LOCAL   TV_hFind:dword
+        LOCAL   TV_hParent
+        
+        push esi
+        push edi
+        push ebx
+
+;;;InsertChild proc    A_hParent:dword, A_ChildText:dword, hTreeV:dword     
+        Invoke  InsertChild, A_hParent, A_pFileName, A_hwndTree
+
+
+        ;부모의 핸들을 저장한다.
+        mov ebx, TreeDepth
+        shl ebx, 2
+        mov Tbl_Handle[ebx], eax
+
+        ;;하위 레벨 이덱스가 증가한다.
+        inc TreeDepth
+
+        
+        ;지금의 파일의 부모의 핸들을 저장한다.
+        mov TV_hParent, eax
+        
+        ;;경로 설정
+        mov TV_TempM[0],0
+        invoke lstrcat, addr TV_TempM, A_pFullFileName
+        invoke lstrcat, addr TV_TempM, addr szWon
+        invoke lstrcat, addr TV_TempM, addr szAllFiles
+
+        ;첫 파일을 검색
+        invoke FindFirstFile, addr TV_TempM, addr TV_fd
+        
+        ;첫 파일이 없다 -> 파일이 하나도 없다.
+        .if eax==INVALID_HANDLE_VALUE
+            jmp P_END       ;검색 중지
+        .endif
+    
+        ;;첫 파일의 핸들 저장
+        mov TV_hFind, eax       
+        
+        ;;첫 파일이 존재할때
+        .while TRUE
+            and TV_fd.dwFileAttributes,FILE_ATTRIBUTE_DIRECTORY
+         
+           ;;첫 파일이 디렉토리인가?
+           .if TV_fd.dwFileAttributes!=0
+                
+                ;;파일이름이 "." 이거나 ".."이면 표시하지 안는다.
+               .if !(word ptr TV_fd.cFileName==2eh || word ptr TV_fd.cFileName==2e2eh)
+                    mov TV_TempM[0],0
+                    invoke lstrcat, addr TV_TempM, A_pFullFileName
+                    invoke lstrcat, addr TV_TempM, addr szWon
+                    invoke lstrcat, addr TV_TempM, addr TV_fd.cFileName
+                    invoke ShowAllFileList, addr TV_TempM, addr TV_fd.cFileName, TV_hParent, A_hwndTree
+               .endif
+                   
+           .else
+                ;디렉토리가 아닌 파일들을 TreeView에 추가한다
+;               Invoke  InsertChild, TV_hParent, addr TV_fd.cFileName, A_hwndTree
+           .endif
+           invoke FindNextFile, TV_hFind, addr TV_fd
+           .break .if eax==0
+        .endw
+        
+        invoke FindClose, TV_hFind
+        
+ P_END:
+        dec TreeDepth
+
+        pop esi
+        pop edi
+        pop ebx
+
+
+        ret     
+
+
+ShowAllFileList     endp
+;===============================================================================
+GetFullPath		proc		A_hTreeView:dword, A_hItem:dword;, cSepChar:dword
+	    LOCAL TV_item:TV_ITEM
+	    LOCAL nParent
+		LOCAL TV_buffer[256]:byte				
+
+
+		
+		push esi
+		push edi
+		push ebx
+		
+		;si 초기화		
+		xor esi, esi
+		
+		;버퍼비우기
+		mov szTextBuffer[0], 0
+		
+						
+		;전달받은 항목의 핸들을 테이블에 저장
+		mov eax, A_hItem
+		mov TBL_hParent[esi], eax
+
+
+;		add esi, 4
+
+
+		.WHILE 1
+			;리스트에서 전달 받은 항목의 부모 아이템을 찾는다.
+	        invoke SendMessage, hwndTreeView, TVM_GETNEXTITEM, TVGN_PARENT, eax
+
+			;부모 아이템이 없을때까지 반복한다.
+			.IF eax == NULL
+;				.if esi == 0
+;					jmp PROC_END
+;				.else
+					jmp PROC_WHILE
+;				.endif
+			.ENDIF
+
+			;테이블의 다음으로 이동한다.
+			add esi, 4			
+			;부모 핸들의 테이블에 저장한다.
+			;전달받은 항목의 부모 아이템이 이번에는 eax에 저장된다.
+			mov TBL_hParent[esi], eax
+
+
+		.ENDW
+
+PROC_WHILE:
+
+
+		;처음 항목으로 올때까지 테이블을 접근한다.
+		.WHILE si != 0
+			push si
+			;처음에는 가장 루트의 항목의 핸들이 반환된다.
+			mov eax, TBL_hParent[esi]		
+			;아이템의 핸들을 지정
+			mov TV_item.hItem, eax
+			;아이템의 이름이 들어갈 버퍼를 지정한다.
+			lea		eax,TV_buffer
+			mov		TV_item.pszText,eax
+
+			;이름의 크기
+	        mov TV_item.cchTextMax,63
+	        ;아이템 형식
+	        mov TV_item.imask,TVIF_TEXT
+
+	        ;리스트창에서 지정 아이템을 찾는다.
+	        invoke SendMessage,hwndTreeView,TVM_GETITEM,0,addr TV_item
+				
+            invoke lstrcat, addr szTextBuffer, addr TV_buffer
+            invoke lstrcat, addr szTextBuffer , addr szWon
+
+
+	        pop si
+			
+			;이전 항목으로 이동한다.	        
+	        sub si, 4
+
+		   
+		.ENDW
+
+			;처음에는 가장 루트의 항목의 핸들이 반환된다.
+			mov eax, TBL_hParent[esi]		
+			;아이템의 핸들을 지정
+			mov TV_item.hItem, eax
+			;아이템의 이름이 들어갈 버퍼를 지정한다.
+			lea		eax,TV_buffer
+			mov		TV_item.pszText,eax
+
+			;이름의 크기
+	        mov TV_item.cchTextMax,63
+	        ;아이템 형식
+	        mov TV_item.imask,TVIF_TEXT
+
+	        ;리스트창에서 지정 아이템을 찾는다.
+	        invoke SendMessage,hwndTreeView,TVM_GETITEM,0,addr TV_item		
+         invoke lstrcat, addr szTextBuffer, addr TV_buffer
+
+
+PROC_END:
+		pop ebx
+		pop edi
+		pop esi
+		
+		ret
+GetFullPath		endp
+
+;===============================================================================
+
+InsertListView		proc		A_hList:dword, A_hFullPath:dword
+
+        LOCAL   TV_fd:WIN32_FIND_DATA
+        LOCAL   TV_hFile:dword
+        LOCAL   TV_TempM[256]:byte
+        LOCAL   TV_hFind:HANDLE
+      	LOCAL li:LV_ITEM   
+      	
+      	 LOCAL TV_IndexDir:dword
+      	 LOCAL TV_IndexTotal:dword
+      	 
+		LOCAL TV_hImageList:dword
+		LOCAL TV_hBitmap:dword
+
+		LOCAL TV_FileSize[256]:byte
+		
+		LOCAL TV_FileTimeBuffer[256]:byte
+		LOCAL TV_hSystemTime:SYSTEMTIME
+		
+        push esi
+        push edi
+        push ebx
+
+           ;이미지를 등록
+            invoke ImageList_Create,16,16,ILC_COLOR16,2,10
+            mov TV_hImageList,eax
+
+
+            ;비트맵 읽기
+            invoke LoadBitmap,hInstance,IDB_TREE
+            mov TV_hBitmap,eax
+
+            ;비트맵을 이미지로 처리
+            invoke ImageList_Add,TV_hImageList,TV_hBitmap,NULL
+            ;비트맵 디바이스 종료
+            invoke DeleteObject,TV_hBitmap
+
+            ;이미지 리스트를 만드는 메세지 발생     
+            invoke SendMessage,hListView1,LVM_SETIMAGELIST,LVSIL_SMALL ,TV_hImageList
+
+
+
+
+		invoke SendMessage, A_hList, LVM_DELETEALLITEMS, 0, 0
+
+
+
+
+		mov TV_IndexDir, 0
+		mov TV_IndexTotal, 0
+        
+        ;;경로 설정
+        mov TV_TempM[0],0
+        invoke lstrcpy, addr TV_TempM, A_hFullPath
+        invoke lstrcat, addr TV_TempM, addr szWon
+        invoke lstrcat, addr TV_TempM, addr szAllFiles
+
+
+        
+
+
+        ;첫 파일을 검색
+        invoke FindFirstFile, addr TV_TempM, addr TV_fd
+        
+        ;첫 파일이 없다 -> 파일이 하나도 없다.
+        .if eax==INVALID_HANDLE_VALUE
+            jmp P_END       ;검색 중지
+        .endif
+    
+        ;;첫 파일의 핸들 저장
+        mov TV_hFind, eax       
+
+        ;;첫 파일이 존재할때
+        .while TRUE
+        
+
+            and TV_fd.dwFileAttributes,FILE_ATTRIBUTE_DIRECTORY
+            
+            
+         
+           ;;첫 파일이 디렉토리인가?
+           .if TV_fd.dwFileAttributes!=0
+                
+                ;;파일이름이 "." 이거나 ".."이면 표시하지 안는다.
+               .if !(word ptr TV_fd.cFileName==2eh || word ptr TV_fd.cFileName==2e2eh)
+
+					;리스트 아이템의 속성지정
+					mov li.imask, LVIF_TEXT + LVIF_IMAGE
+					mov li.state, 0
+					mov li.stateMask, 0
+
+					;첫번째 컬럼에 등록한다.
+					mov li.iSubItem, 0
+
+					;몇번째 아이템인지 등록
+					mov edx, TV_IndexDir
+					mov li.iItem, edx
+					inc TV_IndexDir
+
+					;;;디렉토리의 아이콘을 등록해야 한다,
+					mov li.iImage, 0					
+					
+					;디렉토리의 이름을 리스트에 등록
+                    invoke lstrcpy, addr TV_TempM, addr TV_fd.cFileName
+                    lea esi, TV_TempM
+                    mov li.pszText, esi
+
+                    invoke lnstr, esi
+                    inc eax
+                    mov li.cchTextMax,eax
+
+					invoke SendMessage, A_hList, LVM_INSERTITEM, 0, addr li
+					
+					
+					
+               .endif
+                   
+           .else				;디렉토리가 아닌 파일들을 TreeView에 추가한다
+					;아이템의 속성 등록
+					mov li.imask, LVIF_TEXT + LVIF_IMAGE
+					mov li.state, 0
+					mov li.stateMask, 0
+					
+					
+					;;;;<<<<<<<<<<첫번째 컬럼을 등록한다.>>>>>>>>>>>>>
+					
+					;아이템의 컬럼 지정
+					mov li.iSubItem, 0
+
+					;아이템의 아이콘 등록
+					mov li.iImage, 2
+
+					;현재 아이템의 총 개수를 구한다.
+					invoke SendMessage, A_hList, LVM_GETITEMCOUNT, 0, 0
+					mov TV_IndexTotal, eax
+
+
+					;리스트의 끝에 추가한다.
+;					inc TV_IndexTotal
+					mov edx, TV_IndexTotal
+					mov li.iItem, edx
+
+					;해당 아이템의 이름을 지정한다.
+                    invoke lstrcpy, addr TV_TempM, addr TV_fd.cFileName
+                    lea esi, TV_TempM
+                    mov li.pszText, esi
+
+					;이름의 길이를 구한다.
+                    invoke lnstr, esi
+                    inc eax
+                    mov li.cchTextMax,eax
+
+					;메세지 전송                    
+					invoke SendMessage, A_hList, LVM_INSERTITEM, 0, addr li
+					
+
+					;;;<<<<<<<<<<<<두번째 컬럼에 등록한다.>>>>>>>>>>>>>
+					;컬럼을 하나 증가한다.
+					inc li.iSubItem
+
+					;파일의 크기를 스트링으로 변환한다.
+		            mov     eax, MAXDWORD
+		            mov     ebx, TV_fd.nFileSizeHigh
+		            imul    ebx
+		            add     eax, TV_fd.nFileSizeLow
+		            mov     edx, eax
+					invoke dwtoa, edx, addr TV_FileSize
+
+
+					;디렉토리의 이름을 리스트에 등록
+                     lea esi, TV_FileSize
+                    mov li.pszText, esi
+
+					;이름의 길이를 구한다.
+                    invoke lnstr, esi
+                    inc eax
+                    mov li.cchTextMax,eax
+					
+					;메세지 전송
+					invoke SendMessage, A_hList, LVM_SETITEM, 0, addr li
+					
+					;;;;<<<<<<<세번째 컬럼을 등록한다>>>>>>>>
+					
+					
+					;FILETIME ftCreationTime
+					
+					;시간을 저장한ㄷ
+					lea eax, TV_fd.ftCreationTime
+
+					
+					invoke FileTimeToSystemTime, addr TV_fd.ftCreationTime, addr TV_hSystemTime
+					
+					mov TV_FileTimeBuffer[0], 0
+					movsx edx, TV_hSystemTime.wMonth
+					invoke dwtoa, edx, addr TV_FileTimeBuffer
+					invoke lstrcat, addr TV_FileTimeBuffer, addr szMonth
+					
+					movsx edx, TV_hSystemTime.wDay
+					invoke dwtoa, edx, addr TV_TempM
+					invoke lstrcat, addr TV_FileTimeBuffer, addr TV_TempM
+					invoke lstrcat, addr TV_FileTimeBuffer, addr szDay
+
+					
+					;컬럼을 하나 증가한다.
+					inc li.iSubItem
+
+					
+					;디렉토리의 이름을 리스트에 등록
+                    lea esi, TV_FileTimeBuffer
+                    mov li.pszText, esi
+
+
+					;이름의 길이를 구한다.
+                    invoke lnstr, esi
+                    inc eax
+                    mov li.cchTextMax,eax
+					
+					;메세지 전송
+					invoke SendMessage, A_hList, LVM_SETITEM, 0, addr li
+
+					
+
+           .endif
+           invoke FindNextFile, TV_hFind, addr TV_fd
+
+           .break .if eax==0
+			
+
+        .endw
+
+       
+        invoke FindClose, TV_hFind
+        
+ P_END:
+
+        pop esi
+        pop edi
+        pop ebx
+
+
+
+
+        ret     
+
+InsertListView		endp
+
+
+end start
+
+
+}}}
+
+
+

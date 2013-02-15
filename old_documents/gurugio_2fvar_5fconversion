@@ -1,0 +1,258 @@
+= C 언어에서 변수의 확장 =
+
+'''변수가 확장될 때, 기계 코드로 어떻게 생성되는가?'''
+
+ * 항상 원래 데이터의 값이 유지되도록 변환됨
+  * unsigned char/short --> signed int : 양수로만 변환되면서 값이 유지됨
+  * signed char/short -----> unsigned int : 원래 데이터가 음수일 때는 signed extension이 발생하여 빈 자리에 1이 채워짐
+
+
+
+
+ * signed char를 int로 확장할 때는 부호를 유지해야 하므로 부호 비트를 extension하므로 movsb 명령을 사용한다.
+
+{{{
+#include <stdio.h>
+
+
+int main(void)
+{
+	signed char c = 0x80;
+
+	printf("%d\n", c);
+	printf("%u\n", c);
+
+	return 0;
+}
+
+
+
+a.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <main>:
+   0:	55                   	push   %rbp
+   1:	48 89 e5             	mov    %rsp,%rbp
+   4:	48 83 ec 10          	sub    $0x10,%rsp
+
+   8:	c6 45 ff 80          	movb   $0x80,-0x1(%rbp)
+   c:	0f be 75 ff          	movsbl -0x1(%rbp),%esi
+  10:	bf 00 00 00 00       	mov    $0x0,%edi
+  15:	b8 00 00 00 00       	mov    $0x0,%eax
+  1a:	e8 00 00 00 00       	callq  1f <main+0x1f>
+  1f:	0f be 75 ff          	movsbl -0x1(%rbp),%esi
+  23:	bf 00 00 00 00       	mov    $0x0,%edi
+  28:	b8 00 00 00 00       	mov    $0x0,%eax
+  2d:	e8 00 00 00 00       	callq  32 <main+0x32>
+  32:	b8 00 00 00 00       	mov    $0x0,%eax
+  37:	c9                   	leaveq 
+  38:	c3                   	retq  
+
+}}}
+
+
+ * unsigned char를 int 로 확장할 때는 부호가 없으므로 0-extension을 하기 위해 movzb 명령을 사용한다.
+
+{{{
+
+#include <stdio.h>
+
+
+int main(void)
+{
+	unsigned char c = 0x80;
+
+	printf("%d\n", c);
+	printf("%u\n", c);
+
+	return 0;
+}
+
+
+
+a.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <main>:
+   0:	55                   	push   %rbp
+   1:	48 89 e5             	mov    %rsp,%rbp
+   4:	48 83 ec 10          	sub    $0x10,%rsp
+   8:	c6 45 ff 80          	movb   $0x80,-0x1(%rbp)
+   c:	0f b6 75 ff          	movzbl -0x1(%rbp),%esi
+  10:	bf 00 00 00 00       	mov    $0x0,%edi
+  15:	b8 00 00 00 00       	mov    $0x0,%eax
+  1a:	e8 00 00 00 00       	callq  1f <main+0x1f>
+  1f:	0f b6 75 ff          	movzbl -0x1(%rbp),%esi
+  23:	bf 00 00 00 00       	mov    $0x0,%edi
+  28:	b8 00 00 00 00       	mov    $0x0,%eax
+  2d:	e8 00 00 00 00       	callq  32 <main+0x32>
+  32:	b8 00 00 00 00       	mov    $0x0,%eax
+  37:	c9                   	leaveq 
+  38:	c3                   	retq   
+
+}}}
+
+
+
+
+ * unsigned char를 int 와 비교하면 movzb 명령으로 컴파일되지만, signed char와 int를 비교하면 movsb 명령으로 컴파일된다.
+
+ * 따라서 char를 int와 비교하는 것은 원칙적으로 해서는 안된다.
+
+ * char를 정수값으로 취급하기 위해서는 unsigned int 로 변환해서 사용하거나, 매우 주의해야 한다.
+
+
+{{{:
+#include <stdio.h>
+
+
+int main(void)
+{
+	unsigned char c = 0xff;
+
+	printf("%x\n", c);
+	if (c == 0xff)
+		printf("%x\n", c+1);
+	else
+		printf("%x\n", c-1);
+
+	return 0;
+}
+
+
+
+a.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <main>:
+   0:	55                   	push   %rbp
+   1:	48 89 e5             	mov    %rsp,%rbp
+   4:	48 83 ec 10          	sub    $0x10,%rsp
+   8:	c6 45 ff ff          	movb   $0xff,-0x1(%rbp)
+   c:	0f b6 75 ff          	movzbl -0x1(%rbp),%esi
+  10:	bf 00 00 00 00       	mov    $0x0,%edi
+  15:	b8 00 00 00 00       	mov    $0x0,%eax
+  1a:	e8 00 00 00 00       	callq  1f <main+0x1f>
+  1f:	80 7d ff ff          	cmpb   $0xff,-0x1(%rbp)
+  23:	75 18                	jne    3d <main+0x3d>
+  25:	0f b6 45 ff          	movzbl -0x1(%rbp),%eax
+  29:	8d 70 01             	lea    0x1(%rax),%esi
+  2c:	bf 00 00 00 00       	mov    $0x0,%edi
+  31:	b8 00 00 00 00       	mov    $0x0,%eax
+  36:	e8 00 00 00 00       	callq  3b <main+0x3b>
+  3b:	eb 16                	jmp    53 <main+0x53>
+  3d:	0f b6 45 ff          	movzbl -0x1(%rbp),%eax
+  41:	8d 70 ff             	lea    -0x1(%rax),%esi
+  44:	bf 00 00 00 00       	mov    $0x0,%edi
+  49:	b8 00 00 00 00       	mov    $0x0,%eax
+  4e:	e8 00 00 00 00       	callq  53 <main+0x53>
+  53:	b8 00 00 00 00       	mov    $0x0,%eax
+  58:	c9                   	leaveq 
+  59:	c3                   	retq   
+
+}}}
+
+
+ * 다음 예제로 다양한 경우에 어떻게 데이터 타입이 변환되는지 확인할 수 있다.
+
+ * 항상 원본 데이터의 값이 그대로 유지되는 것에 주의한다.
+
+ * 원본 데이터가 -127 일때는 확장될 때에도 -127이 되도록 부호 확장으로 변환된다.
+
+ * 원본 데이터가 128일 때는 0-확장으로 변환된다.
+ 
+
+{{{:
+
+#include <stdio.h>
+
+int main(void)
+{
+        volatile int a = -127;
+        volatile unsigned int b = a;
+
+
+        volatile unsigned ub = 0x80;
+        volatile int sa = ub;
+
+        volatile unsigned char sc = 0x80;
+        volatile int si  = sc;
+
+        volatile char scc = 0x80;
+        volatile unsigned int sii  = scc;
+
+
+
+        printf("%d\n", a);  // 부호있는 정수로 출력 -127
+        printf("%u\n", a); // 부호없는 정수로 출력 42~~
+        printf("%d\n", b); // 부호없는 정수를 부호있는 정수로 변환해서 출력
+        printf("%u\n", b); // 부호없는 정수를 부호없는 정수로 출력
+        printf("%x\n", a); // a나 b나 16진수/2진수로 출력하면 동일함
+        printf("%x\n", b);
+        printf("==================\n");
+
+        printf("%d\n", sa); // 0x80 값이 그대로 유지됨
+        printf("%u\n", sa);
+        printf("%d\n", ub);
+        printf("%u\n", ub);
+        printf("%x\n", sa);
+        printf("%x\n", ub);
+        printf("==================\n");
+
+        printf("%d\n", sc); // 0x80 값이 유지됨
+        printf("%u\n", sc);
+        printf("%d\n", si);
+        printf("%u\n", si);
+        printf("%x\n", sc);
+        printf("%x\n", si);
+        printf("==================\n");
+
+        printf("%d\n", scc); // 원본 데이터의 부호가 확장되서 1이 채워짐
+        printf("%u\n", scc);
+        printf("%d\n", sii);
+        printf("%u\n", sii);
+        printf("%x\n", scc);
+        printf("%x\n", sii);
+
+
+
+        return 0;
+}
+
+
+
+[root@localhost tmp]# ./a.out
+-127
+4294967169
+-127
+4294967169
+ffffff81
+ffffff81
+==================
+128
+128
+128
+128
+80
+80
+==================
+128
+128
+128
+128
+80
+80
+==================
+-128
+4294967168
+-128
+4294967168
+ffffff80
+ffffff80
+}}}

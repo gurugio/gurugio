@@ -1,0 +1,83 @@
+= S3C6400 매뉴얼 17장 TV Encoder =
+
+
+
+== TV Encoder ==
+
+ * 디지털 비디오 데이터를 TV 출력을 위한 아날로그 신호로 바꿔줌
+ * 이미지를 TV 크기에 맞게 조정하는 image enhancing engine (Mobile Image Enhancer)
+  * Black & White Stretch
+  * Blue Stretch & Flash-Tone Correction
+  * Dynamic Horizontal Peaking & LTI
+  * Black and White Noise reduction
+  * Contrast, Sharpness, Gamma and Brightness Control
+ * 다양한 크기의 이미지 출력 가능
+  * Full / Wide / Original
+ * LCD에 출력하는 동시에 다른 영상을 TV로 출력할 수 있음
+ * 출력 포맷
+  * Analog composite-out
+  * S-video
+
+== Fig 17-1 ==
+
+ * Y 출력 : XdacOUT_0핀, Composite 신호 출력
+ * C 출력 : XdacOUT_1핀, Y-C 출력으로 S-video 신호 조합
+
+
+== Fig 17-2 ==
+
+ * LCD와 다른 영상을 동시에 출력할 수 있음
+  * TV Scaler
+  * Black & White Stretch
+ * Gamma, Bright, Contrast 등의 이미지 효과
+  * TV Encoder
+ * 디지털 영상을 ITU-R BT.656 포맷으로 인코딩
+
+
+== Fig 17-6 ==
+
+ * 60HZ 타입
+  * 한장의 프레임은 858X525
+  * 동기 영역을 뺀 실제 이미지는 720X480
+  * 수평 라인에는 2배의 픽셀 데이터가 필요함 (Image Enhancer에서 처리함)
+ * 50HZ 타입
+  * 864X625 -> 720X576
+
+
+== Fig 17-7 ==
+
+ * 하나의 수평 라인 출력 타이밍
+ * Enhancer Offset Value가 26 픽셀 타임
+  * 이미지 데이터가 Enhance Engine을 통과하는데 26픽셀 타임이 소모됨
+  * 따라서 출력 데이터를 26픽셀 타임 먼저 전송해주어야 제 시간에 데이터를 출력시킬 수 있음
+  * 60HZ와 50HZ의 타이밍이 다름
+
+
+== Fig 17-8 ==
+
+ * 한 화면이 출력되는 타이밍
+ * 50HZ는 525개 라인, 60HZ는 625라인 출력
+
+== MACROVISION ==
+
+ * 전자 신호의 복제를 막기 위한 신호 표준
+ * TV 출력의 복제를 막기 위해 원본 신호에 특정한 신호를 더해서 원본 출력외에의 복제 신호에 노이즈를 추가시킴
+
+
+== Fig 17-13 ==
+
+ * ESD 방지를 위한 AMP 사용
+ * 임피던스를 맞추기 위한 저항 연결
+
+== NTSC ==
+
+ * http://ko.wikipedia.org/wiki/NTSC
+ * 1938년에 조지 발렌시(Georges Valensi) 가 개발한 휘도-색차 부호화 시스템 (luminance-chrominance encoding system) 을 사용
+ * 휘도(Luminance) 신호는 기존의 흑백 신호를 대체한다. 색차(Chrominance) 신호는 색상 정보를 포함
+ * "백 포치"는 수평 동기 신호 펄스의 마지막과 각 라인의 수평 귀선 소거(blanking) 펄스 사이의 구간을 말한다
+ * 컬러 버스트에서 얻어진 기준 신호와 색상 신호의 위상 및 진폭을 비교함으로서, 색도(hue)와 채도(saturation) 정보를 얻을 수 있다
+ * Front Porch: 각 라인 신호를 구별하는 시간
+
+
+
+

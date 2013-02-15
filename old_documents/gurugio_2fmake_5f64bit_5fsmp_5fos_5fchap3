@@ -1,0 +1,928 @@
+'''64비트-SMP 커널 만들기 - 3장 롱모드 진입'''
+
+
+----
+
+ * 작성자: 김기오 
+ 
+ * 문서 소개
+64비트-SMP 커널 만들기 강좌의 3장
+
+----
+
+ * 작성 일지
+
+2009.2.21 김기오: 작성 시작
+
+
+----
+
+[[TableOfContents]] 
+
+----
+
+= 롱모드 진입 =
+
+
+1차 부트로더에서는 2차 부트로더의 이미지와 커널 이미지를 메모리에 로드하는 일을 한다. 그럼 2차 부트로더에서는 무슨 일을 할까? 커널이 실행되기 위한 최대한의 준비를 다 해야할텐데 그것이 무엇인지는 커널의 디자인에 따라서 달라질 것이다. 하지만 무엇보다도 가장 급한 것은 프로세서의 초기화와 커널이 실행되기 위한 주소 공간을 만드는 일이다.
+
+프로세서 초기화는 프로세서마다 다르지만 하드웨어 캐시의 초기화나 MMU를 이용한 가상 메모리 기능의 초기화 등이 가장 필수적인 작업일 것이다. x86_64에는 L1부터 L3까지 3종류의 캐쉬가 있는데 부팅직후부터 자동으로 모두 활성화되어 있다. 따라서 따로 캐시를 켜기위해 해야 할 일은 없지만 바이오스가 남긴 데이터가 있는 메모리 영역이나 비디오 메모리 영역 등 특별한 메모리 영역은 캐시가 적용되지 못하도록 해야한다.
+
+커널의 주소 공간에 대한 설정도 롱모드 진입과 함께 고려해야 한다. 보호모드나 롱모드로 프로세서의 동작 모드가 결정되면서 프로세서의 주소 지정이 설정된다. 따라서 커널이 실행되는 물리 주소를 어느 가상 메모리 주소로 매핑할 것인지를 결정해야 한다. 예를 들어 커널 이미지가 물리 메모리 0x10_0000 (상위 1MB 영역)에 저장되어 있을 때, 가상 메모리를 설정하기에 따라서 커널의 가상 주소는 0x10_0000 이 될 수도 있고, 0xFFFF_8000_0000_0000 이 될 수도 있다. 이렇게 커널의 주소 공간을 설정하는 일은 커널의 전체 디자인에 대해서도 고려해야 하므로 신중하게 선택해야 한다.
+
+CaOS에서는 최대한 리눅스 커널의 주소 공간 설정을 따르도록 구현하였다. 이미 오랜 시간동안 검증되었고, 프로세서 설정에 대해 많은 자료가 있으므로 구현이 편하기 때문이다.
+
+
+== 롱모드 개요 ==
+
+
+롱모드에 대한 설명은 예전에 써놓은 문서(http://asmlove.co.kr/wiki/wiki.php/gurugio/64bit_mode)로 대신한다.
+
+
+=== Terminology ===
+
+
+ * Intel 64 아키텍쳐는 선형 주소를 64비트로 확장하고, 물리 주소를 40비트로 확장한 프로세서 계열을 말한다.
+ * 이 새로운 동작 모드의 이름이 IA-32e 모드이다.
+ * IA-32e 모드는 두가지 하위 모드를 가진다.
+  * 기존의 32비트 소프트웨어를 실행할 수 있는 lagacy 32bit 모드 (64비트 동작 중에서 32비트 운영체제 실행 가능)
+  * 64비트 소프트웨어를 실행하는 64bit 모드
+
+ * Intel Virtualization Technology (Intel VT)는 Intel 64와 IA-32 아키텍쳐에서 가상화 기술을 구현한 것이다.
+ * 이 기술의 이름이 Virtual Machine Extensions (VMX)라고 한다.
+ * 즉, Intel VT가 이름이 아니고 VMX 가 인텔의 가상화 기술의 이름이 된다.
+ * VMX는 시스템 소프트웨어가 동작할 수 있는 새로운 layer를 제공하는데 이것을 Virtual Machine Monitor (VMM) 이라고 부른다.
+ * 가상화 머신이 동작하는 시스템 레벨이 VMM이다.
+
+
+=== Basic Execution Environment ===
+
+
+ * Compatibility mode (IA-32e 모드의 하위 모드)
+  * 기존의 16비트/32비트 프로그램이 재컴파일 없이 그대로 64비트 운영체제에서도 동작할 수 있도록 해준다.
+  * IA-32 아키텍쳐의 32비트 보호 모드의 동작과 거의 동일하게 동작한다. 하지만 Vitrual 8086 모드로 동작하거나 하드웨어 테스크 관리 기능을 사용하는 어플리케이션은 이 모드에서 사용할 수 없다.
+  * 32비트 보호 모드 동작과 유사하므로 4GB의 선형 주소만 사용할 수 있고 16비트/32비트 오퍼랜드만 사용할 수 있다. PAE 기능을 사용하면 4GB 이상의 물리 메모리도 사용할 수 있다.
+
+ * 64bit mode
+  * 일반 레지스터의 크기가 64비트로 늘어났고 기존 레지스터의 이름에 R을 붙여서 레지스터 이름을 지정할 수 있다.
+  * 최대 64비트의 가상 주소 범위를 가질 수 있지만, 실제 프로세서 모델에 따라 그 이하의 주소 범위를 허용한다.
+  * 최대 52비트의 물리 주소 범위를 가진다. (PAE 기능을 사용할 때)
+
+ * 64bit Mode의 실행 환경
+  * CPUID 명령으로 프로세서가 지원하는 물리 주소 범위를 알아낼 수 있다.
+  * 64비트 크기의 일반 레지스터가 16개 있고, 각각 바이트/워드/더블워드/쿼드워드 크기로 사용할 수 있다. 플래그 레지스터도 RFLAGS 레지스터라는 이름으로 64비트 확장되었다.
+  * 스택 포인터도 64비트 크기를 가진다.
+  * 컨트롤 레지스터도 64비트로 확장되었다. CR8, TRP이라는 새로운 컨트롤 레지스터가 추가되었다.
+  * GDTR/IDTR은 10바이트로 확장되었고 64비트 크기의 베이스 주소를 저장할 수 있다. LDTR/TR 레지스터도 64비트 주소를 저장할 수 있도록 확장되었다.
+
+ * 64bit Mode의 메모리 구성
+  * 64비트 모드에서는 구조적으로 64비트 선형 주소를 지원하지만 실제 프로세서 구현에 따라 그 이하의 메모리 주소를 지원한다.
+  * 선형 주소는 PAE 페이징 메카니즘을 통해서 물리 주소로 맵핑된다.
+  * 세그멘테이션은 거의 사용되지 않는다. 특히 CS,DS,ES,SS 레지스터의 세그먼트 주소를 0으로 생각하고, 선형 메모리 공간을 flat 하게 만들어 사용한다. 즉, 세그먼트 레지스터의 값을 무시하고 선형 메모리 주소를 곧 effective 메모리 주소로 사용한다. 세그먼트 주소나 리얼 주소는 더이상 사용되지 않는다.
+  * 스택 주소를 사용할 때도 SS 레지스터는 사용되지 않는다. 더이상 SS는 스택 세그먼트를 지정하는 레지스터가 아니게 된다.
+  * 예외적으로 FS, GS 세그먼트 레지스터만 베이스 주소를 지정하는데 사용될 수 있다.
+  * 16비트나 32비트 주소를 사용하는 프로그램에서는 64비트 레지스터에 주소 값을 저장하고 나머지 비트에는 모두 0을 채운다. 따라서 64비트 모드에서 동작하는 32비트 프로그램은 4GB의 메모리 공간만 사용할 수 있게 된다.
+ 
+ * Canonical Addressing
+  * Intel 64 는 64비트의 선형 주소를 정의하고 있지만 프로세서 구현에 따라 그 이하의 주소 크기를 가진다.
+  * 초기 IA-32는 Intel 64 아키텍쳐를 지원하지만 48비트의 선형 주소 크기를 지원한다. 48번 비트부터 63번 비트까지는 0이나 1로 채워넣어야 하는데 이런 주소 지정을 Canonical Addressing 이라고 한다. 47번 비트가 0이면 0으로 채워넣고 1이면 1로 채워넣는다.
+  * 즉 64비트 선형 주소를 사용하기 위해서, 프로세서가 지원하는 최상위 비트의 값을 프로세서가 지원하지 않는 비트 자리에 채워넣게 된다. 만약 canonical form 이 아닌 주소를 사용하면 general-protection 예외가 발생한다. 스택 주소에서는 stack 폴트가 발생한다.
+
+ * 64비트 모드의 Instruction Pointer
+  * 다음에 실행될 명령어의 주소를 가지는 RIP 레지스터는 64비트 크기를 가진다.
+  * 64비트 모드에서는 RIP-relative Addressing이라는 새로운 주소 지정 방식을 지원한다. 이 방식에서는 effective 주소를 계산할 때 RIP에 displacement 값을 더하여서 계산하게 된다. 즉, 원하는 데이터나 명령어의 주소를 계산할 때 현재 RIP에서 어느정도 떨어져있는 메모리 위치인지를 계산하는 방식이다.
+
+ * 64비트 모드의 레지스터 오퍼랜드
+  * 64비트 일반 레지스터 (RAX, RBX, RDX, RDX, RSI, RDI, RSP, RBP, R8~R15)
+  * 32비트 일반 레지스터 (EAX, EBX, ECX, EDX, ESI, EDI, ESP, EBP, R8D~R15D)
+  * 16비트 일반 레지스터 (AX, BX, CX, DX, SI, DI, SP, BP, R8W~R15W)
+  * 8비트 일반 레지스터 (AL, BL, CL, DL, SIL, DIL, SPL, BPL, R8L~R15L은 REX라는 prefix와 함께 사용해야 함)
+  * 세그먼트 레지스터 (CS, DS, SS, ES, FS, GS)
+  * RFLAGS
+  * 제어 레지스터 (CR0, CR2, CR3, CR4, CR8)
+  * 시스템 테이블 포인터 레지스터 (GDTR, LDTR, IDTR, TR)
+  * MSR 레지스터 집합
+  * RDX:RAX 쌍으로 128비트 오퍼랜드 지정 가능
+  * 그 외의 디버깅 레지스터, MMX/XMM 관련 레지스터
+
+ * 64비트 모드에서 세그멘테이션
+  * legacy IA-32 모드에서는 기존의 세그멘테이션과 동일하게 동작함
+  * 64비트 모드에서는 CS, DS, ES, SS 레지스터의 값을 항상 0이라고 가정하고 동작한다.
+  * 64비트 모드에서 FS, GS만 선형 주소 계산에 베이스 값으로 사용될 수 있다.
+  * 코드 세그먼트 디스크립터와 셀렉터는 프로세서의 동작 모드와 권한 레벨을 설정하는데 사용된다. L 이라는 새로운 필드를 만들어서 64비트 모드 동작 중에 L 비트가 0이면 프로세서가 comaptibility 모드로 동작하게 된다. 64비트 모드 동작 중에 L 비트가 1이면 CS.D는 항상 0이 되어야 하고 프로세서는 64비트 주소 크기로 동작한다.
+  * 코드 세그먼트 디스크립터의 DPL 필드는 32비트 보호 모드에서와 같이 코드 실행에 필요한 권한 레벨을 검사하는데 사용된다. 
+  * 64비트 모드에서는 코드 세그먼트나 데이터 세그먼트의 limit를 체크하지 않는다.
+
+ * 64비트 모드에서의 태스크 관리
+  * 사실상 모든 운영체제가 하드웨어 태스크 스위칭 기능을 사용하지 않고 소프트웨어적으로 처리하므로 64비트 모드에서는 하드웨어 태스크 스위칭 기능을 지원하지 않는다.
+  * 따라서 JMP, CALL, INTn 등으로 태스크 게이트를 호출하는 것은 GP 예외를 발생시킨다.
+  * 64비트 태스크 스테이스 세그먼트 TSS는 계속 존재한다. 400바이트의 크기를 가지며 스택 포인터 값과 인터럽트 스택 테이블 포인터의 값들을 저장한다.
+  * 64비트 모드로 전환 후에는 하나 이상의 64비트 TSS를 만들어서 LTR 명령어로 TR 레지스터에 TSS의 주소를 저장해야 한다.
+  * 태스크가 전환된 후 스택 포인터는 TSS에 저장된 RSP 값이 된다.
+  * SS 레지스터 값은 0이 된다. SS.RPL 값은 전환된 태스크의 CPL 값이 된다.
+
+ * 64비트 모드에서의 인터럽트와 예외
+  * 모든 인터럽트/예외 처리 핸들러는 64비트 코드로 작성되야 한다.
+  * 인터럽트 번호에 16을 곱해야 IDT 테이블에서 해당하는 인터럽트의 디스크립터를 찾을 수 있다.(32비트 보호모드에서는 8을 곱한다.)
+ 
+ * 함수 인자 전달
+  * %rdi, %rsi, %rdx, %rcx, %r8, %r9, 스택  순으로 전달됨
+  * http://www.x86-64.org/documentation/abi-0.98.pdf 참고
+
+
+== 롱모드 진입을 위한 예제 부트로더 구현 ==
+
+
+간단하게 롱모드로 진입하는 일만 하는 부트로더를 만들어보면서 롱모드에 대해 이해한다. 다음과 같은 일을 하도록 구현한다.
+
+ 1. 스크린에 시스템이 부팅한 것을 알리는 '1' 문자 출력
+ 1. GDT 설정 (하드코딩된 5개의 디스크립터를 0x1000 주소에 복사)
+ 1. GDTR 레지스터에 GDT의 주소 저장
+ 1. CR0.PE 를 셋팅하여 32비트 보호모드 진입
+ 1. 보호모드 코드로 점프 (CS 레지스터의 값을 바꾸기 위해 롱 점프를 실행한다)
+ 1. 스크린에 '2' 출력
+ 1. CR4.PAE 비트 셋팅
+ 1. 페이징을 위한 4레벨 페이지 테이블 설정
+ 1. CR3 레지스터에 PML4의 물리 주소 저장
+ 1. EFER.LME 비트를 셋팅하여 64비트 모드 활성화
+ 1. CR0.PG 비트를 셋팅하여 페이징 기능 활성화
+ 1. 페이징을 활성화하면 곧바로 롱 점프로 64비트 코드를 실행해야 함 (파이프라인의 32비트 코드를 제거하기 위함)
+ 1. EFER.LMA 비트가 1이 되었으면 64비트 롱모드로 완전히 변환된 것임
+ 1. 스크린에 '3' 출력
+ 1. 최종적으로 스크린에 123 문자가 출력되야 함
+
+
+부팅 직후에 프로세서는 16비트 리얼모드로 동작한다. 다음 그림과 같이 GDT 테이블을 만들고 GDTR 레지스터에 GDT 테이블의 크기와 주소 값을 저장한 후, CR0 레지스터의 PE 비트를 셋팅하면 보호 모드 동작이 시작된다. 보호모드가 시작되면 CS는 세그먼트의 주소 값이 아니라 GDT 테이블의 인덱스 값이 되야 한다. 그리고 IP 값도 32비트로 바껴야 한다. 따라서 CS:IP 레지스터를 모두 바꾸기 위해 CR0 레지스터를 수정한 직후 첫 명령어는 CS와 IP 레지스터를 모두 바꾸는 far-jump로 작성한다. 참고로 GDTR에 써질 GDT 테이블의 주소는 가상 메모리 주소이다. 보호모드를 설정하면서 가상메모리 주소가 물리 주소와 동일하게 설정하므로 상관없지만 추후 커널에서 GDT 테이블을 다시 만들어서 GDTR 레지스터 값을 바꿀 때는 가상 주소를 저장해야 한다. GDT 테이블의 디스크립터 값들은 바뀔 경우가 거의 없으므로 미리 초기 값을 배열로 저장해놓고 테이블을 저장할 물리 메모리에 복사하는 방식으로 테이블을 생성한다.
+
+32비트 보호모드가 시작되면 곧바로 롱모드로 진입하기 위한 처리를 한다. 가장 먼저 해야 할 일은 CR4 레지스터의 PAE 비트를 셋팅하는 것이다. PAE비트가 셋팅되면 물리 메모리 주소가 최대 52비트가 된다. 64비트 프로세서라고는 하지만 64비트를 모두 메모리 주소로 사용한다면 캐시 관리나 페이지 테이블 관리에 필요한 데이터가 필요이상으로 많아진다. 언젠가는 64비트 영역 전체를 사용하겠지만 일단 최근 프로세서들은 52비트까지 사용하도록 하고 있다. 64비트 RIP 레지스터에서 52비트만 사용하고 나머지 상위 비트들은 주소 값이 최상위 비트를 그대로 채우도록 한다. 즉 52비트 주소 값이 0xF000_0000_0000 이라면 최상위 비트가 1이므로 나머지 12비트도 1로 채워서 RIP의 값을 0xFFFF_F000_0000_0000 으로 써야 한다. 
+
+
+attachment:gurugio/make_64bit_smp_os_chap3/pic_3_1.GIF
+
+
+PAE 비트를 셋팅한 후에는 4단계 페이징을 위한 테이블을 만든다. 롱모드에서 사용될 페이징에는 PML4, PDP, PDE, PTE로 4개의 테이블을 만들어야 한다. 다음 그림과 같이 각각의 페이지 테이블을 만들고, 테이블의 엔트리에는 다음 단계 테이블의 시작 주소를 저장한다. 이때 쓰여지는 값은 물리 메모리 주소가 되야 한다. CR3 레지스터에는 첫번째 단계 페이지 테이블인 PML4 테이블의 시작 주소를 써준다. 마지막으로 롱모드로 동작시키기 위해 EFER 레지스터의 LME 비트를 셋팅하고 페이징을 활성화한다. 페이징과 롱모드 변환을 따로 해도 되지만 페이징을 먼저 하면 주소 계산이 복잡해지므로 한꺼번에 처리했다. 그리고 이 때에도 32비트 주소에서 64비트 주소로 바뀌고 세그먼트 디스크립터도 64비트 용으로 바꿔야 하므로 far-jump를 해서 CS:IP 값을 바꿔준다.
+
+
+attachment:gurugio/make_64bit_smp_os_chap3/pic_3_2.GIF
+
+
+페이징을 시작하면 물리 메모리의 초기 4MB 영역이 가상 메모리의 0xFFFF_8000_0000_0000 으로 1:1 매핑된다. 예를 들어 비디오 메모리 0xB8000 에 값을 쓰기 위해서는 0xFFFF_8000_000B_8000 주소에 값을 쓰면 된다. 원하는 물리 주소에 0xFFFF_8000_0000_0000 를 더하면 가상 주소 값을 얻을 수 있다. 커널의 초기 부팅 부분에서는 물리 메모리에 접근할 일이 많으므로 이렇게 선형으로 1:1이 되도록 매핑해놓으면 쉽게 물리 메모리 주소가 매핑되는 가상 메모리 주소를 계산할 수 있다. 이렇게 메모리 매핑이 시작되는 0xFFFF_8000_0000_0000 값을 PAGE_OFFSET 이라는 상수로 정의해서 물리 메모리에 접근할 때마다 사용하게 된다.
+
+
+attachment:gurugio/make_64bit_smp_os_chap3/pic_3_3.GIF
+
+
+64비트 롱모드가 정상적으로 시작되었는지는 EFER 레지스터의 LMA 비트가 1이 되었는지 확인하면 알 수 있다. LME 비트를 셋팅하는 것은 롱모드 변환을 시작시키는 것이고 최종적으로 롱모드 동작으로 변환이 완료되면 프로세서가 자동으로 LMA 비트를 1로 셋팅해준다.
+
+
+'''(각 비트의 의미나 세부적인 동작 순서는 하나의 문서에 쓰기에는 내용이 좀 많으므로 인텔 메뉴얼과 참고자료 챕터의 문서들을 참고하시기 바랍니다.)'''
+
+
+ * bootsect.asm
+{{{
+; IA32e - 64bit mode test bootloader
+; how to assemble : nasm -o bootsect.img bootsect.asm
+; Boot bootsect.img with floppy image with x86-64 emulator such as VMware of qemu
+
+KERNEL_CODE_SEL   equ 0x08
+KERNEL_DATA_SEL   equ 0x10
+KERNEL_CODE64_SEL   equ 0x18
+KERNEL_DATA64_SEL   equ 0x18
+
+GDT_ADDR        equ 0x1000 ; GDT at the first page frame
+GDT_SIZE    equ 0x1000 ; GDT takes one page frame
+
+
+PML4_addr equ 0x20000
+PDP_addr equ 0x21000
+PDE_addr equ 0x22000
+PTE1_addr equ 0x23000
+PTE2_addr equ 0x24000
+
+
+BIT_CR4_PAE equ 5
+BIT_CR4_PGE equ 7
+
+BIT_EFER_LME equ 8
+BIT_EFER_LMA equ 10
+BIT_EFER_SCE equ 0
+
+BIT_CR0_PE equ 0
+BIT_CR0_PG equ 31
+
+
+[bits 16]
+[org 0x7c00]
+
+start:
+
+    mov ax, cs
+    mov ds, ax
+    mov es, ax
+
+
+    ; tell BIOS that operating mode will be Long Mode
+    mov eax, 0xec00
+    mov ebx, 2
+    int 0x15
+
+    ; print log
+    mov ax, 0xb800
+    mov es, ax
+    mov bx, 0x0
+    mov al, '1'
+    mov byte [es:bx], al
+    
+
+    ; copy GDT descriptors
+    lea si, [gdt]    ; source : ds:si=0x0:gdt
+    xor ax, ax
+    mov es, ax        ; destination : es:di=0x0:0x1000
+    mov di, GDT_ADDR
+    mov cx, 8*7    ; 7 descriptors
+
+    rep movsb
+
+
+
+    cli
+    lgdt [gdtr]
+
+
+    mov eax, cr0
+    or eax, (0x1<<BIT_CR0_PE)
+    mov cr0, eax
+
+
+    jmp dword KERNEL_CODE_SEL:protect_start
+
+
+[bits 32]
+protect_start:
+    mov ax, KERNEL_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+
+    ; print log
+    mov edi, 0xb8002
+    mov al, '2'
+    mov byte [edi], al
+
+
+    ; temporary stack for booting process
+    mov esp, 0xa0000
+
+    ;set PAE bit in CR4
+    mov eax, cr4
+    or eax, (0x1<<BIT_CR4_PAE) 
+    mov cr4, eax
+
+
+    ; set PML4[0] to PDP address
+    mov edi, PML4_addr
+    mov eax, PDP_addr
+    or eax, 0x7            ; User, Writable, Present
+    mov [es:edi], eax
+
+
+    ; set PDP[0] to PDE address
+    mov edi, PDP_addr
+    mov eax, PDE_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set PDE[0] to address of the first PTE
+    mov edi, PDE_addr
+    mov eax, PTE1_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set PDE[1] to the second PTE2_addr
+    ; size of one entry is 8 byte
+    add edi, 8
+    mov eax, PTE2_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set the first & second PTE to 0~4M
+    ; physical memory 0~4MB is mapped to linear address
+    mov edi, PTE1_addr
+    mov eax, 0x7
+    mov ecx, 1024 ; 512-PTE1, 512-PTE2
+set_PTE:
+    mov [es:edi], eax
+    add eax, 0x1000
+    add edi, 8
+    dec ecx
+    jnz set_PTE
+
+
+    ; set CR3 to address of PML4
+    mov eax, PML4_addr
+    mov cr3, eax
+
+
+
+    ; enable long mode by set EFER.LME bit
+
+    ; set MSR 0xc0000080 with RDMSR, WRMSR instruction
+    ; read "system programming guide 1 - appendix B"
+    mov ecx, 0xc0000080
+    rdmsr
+    or eax, (0x1<<BIT_EFER_LME)
+    wrmsr
+
+
+    ; activate paging
+    mov eax, cr0
+    or eax, (0x1<<BIT_CR0_PG)
+    mov cr0, eax
+
+    
+    ; long jump is necessary
+    jmp KERNEL_CODE64_SEL:long_start
+
+
+
+gdtr:
+    dw GDT_SIZE
+    dd GDT_ADDR
+
+gdt:
+    dd 0x00000000, 0x00000000
+    dd 0x0000FFFF, 0x00CF9A00 ; kernel code segment for protected mode
+    dd 0x0000FFFF, 0x00CF9200 ; kernel data segment for protected mode
+    dd 0x0000FFFF, 0x00AF9A00 ; longmode kernel code segment, CS.L=1, CS.D=0
+    dd 0x0000FFFF, 0x00AF9200 ; longmode kernel data segment
+
+gdt_end:
+
+
+[bits 64]
+long_start:
+    
+
+    ; test LMA((Long Mode Active) bit in EFER
+    mov ecx, 0xc0000080
+    rdmsr
+    and eax, (0x1<<BIT_EFER_LMA)
+    jz longmode_fail
+
+
+
+    ; magic number to check 64bit register is available
+    mov rax, 0x12345678abcdef00
+
+    mov rdi, 0xb8004
+    mov al, '3'
+    mov byte [rdi], al
+
+    add rdi, 2
+long_loop:
+    mov byte [rdi], al
+    add al, 1
+    jmp long_loop
+  
+
+longmode_fail:
+    mov rdi, 0xb8000
+    mov al, 'X'
+    mov byte [rdi], al
+
+    jmp $
+
+
+times 510-($-$$) db 0
+  dw 0xaa55
+
+}}}
+
+
+{{{
+# How to compile 64bit kernel refers to http://wiki.osdev.org/Creating_a_64-bit_kernel
+# and the other options refer gcc manual & http://www.osx86.org
+
+BOOT_SRCS = bootsect.asm
+BOOT_IMG = boot.img
+
+all:$(BOOT_IMG)
+	cat $(BOOT_IMG) > floppy.img
+
+$(BOOT_IMG):$(BOOT_SRCS)
+	nasm -o bootsect.img bootsect.asm
+	cat bootsect.img > $@
+
+clean:
+	rm -f *.o *.img
+}}}
+
+
+== 2단계 부트로더 구현 ==
+
+
+지금까지는 롱모드로 진입하기 위한 코드만 작성했지만 필요에 따라 캐시나 바이오스 제어 등 하드웨어 종속적인 처리를 추가할 수 있으므로 512바이트 제한이 있는 1차 부트로더만 가지고 커널을 부팅시키기에는 공간상 부족함이 있다. 따라서 롱모드 진입 관련 코드를 2차 부트로더로 구현하고 1차 부트로더에서는 2차 부트로더를 로딩하고 실행하도록 구현한다.
+
+bootsect.asm 파일이 1차 부트로더의 소스 파일이고 setup.asm 파일은 2차 부트로더의 소스 파일이다. bootsect.asm 파일은 512바이트 크기의 부트섹터에 저장되며 바이오스 인터럽트 함수를 이용해서 2번 섹터부터 저장되어 있는 2차 부트로더 코드를 물리 메모리 0x9000 에 저장하는 일을 한다.
+
+setup.asm 파일은 물리 메모리의 페이지 크기에 맞춰서 4096바이트 크기로 고정했다. 따라서 1차 부트로더는 항상 8섹터를 읽어오게 된다. 단지 A20 핀을 설정하는 코드가 없을 뿐 롱모드 부팅을 위한 예제 파일과 다를게 없다. 롱모드로 변환하면서 CaOL 이라는 문자를 화면에 출력한다.
+
+bootsect.asm 파일과 setup.asm 파일의 컴파일 방법은 동일하다. 둘 다 바이너리 이미지로 컴파일하고 하나의 이미지로 합치기만 하면 qemu를 이용해서 부팅해볼 수 있다. Makefile의 내용도 첨부한다.
+
+
+ * bootsect.asm
+{{{
+;====================================================
+; DESCRIPTION: 1. load setup.asm at 0x9000
+;              2. load kernel at 0x9200
+; FILE NAME: bootsect.asm
+;====================================================
+
+
+[org 0x0]
+
+
+SETUP_SECT	equ 8 ; sutup.img size is 4096 (8 sectors)
+
+BOOT_SEG	equ 0x7c0
+SETUP_SEG	equ 0x900
+
+SETUP_ADDR	equ 0x9000
+
+
+	jmp BOOT_SEG:start
+
+boot_drv		db 0	; floppy drive A:
+sect_per_track	dw 18	; sectors per one track
+head_per_drv	dw 2	; floppy has 2 heads
+current_sect	dw 1	; current reading sector # (relative)
+read_sect		db 0	; it read how many sectors
+
+; define routines for A20 line activation
+%include "a20.inc"
+
+start:
+	mov ax, cs
+	mov ds, ax		; ds=es=0x7c0
+	mov es, ax
+
+	mov ss, ax		; stack: 0x7c0:0 -> low memory
+	mov sp, 0x0
+
+	mov [boot_drv], dl	; bios store drive number in dl
+
+
+	mov ax, SETUP_SEG	; read setup.asm
+	mov es, ax
+	mov si, 0			; store image at es:si
+	mov cx, SETUP_SECT	; how many sectors?
+	call read_sectors
+
+
+	call a20_try_loop	; activate A20 line
+
+
+	mov ax, 0xb800
+	mov es, ax
+	mov bx, 0x0
+	mov al, byte [hello_msg]	; Greeting!
+	mov byte [es:bx], al
+	
+	
+
+	;==========================================
+	; segment addres = 0x0
+	; offset = 0x9000
+	; Segment must be 0x0000.
+	;==========================================
+	jmp 0x0:SETUP_ADDR	; execute setup
+
+
+	jmp $				; or die!
+
+; es: segment address
+; cx: sector count
+read_sectors:
+	push cx
+	call read_one_sect		; load one sector
+	pop cx
+
+	add si, 512				; offset for next sector
+	dec cx					; next sector
+	
+	or cx, cx
+	jz _read_sectors
+
+	jmp read_sectors
+_read_sectors:
+	ret
+
+
+
+read_one_sect:
+	; relative sector # (ax) / sectors per one track (di)
+	; = relative track # (ax), absolute sector # in track (dx)
+	mov ax, [current_sect]
+	mov di, [sect_per_track]
+	xor dx, dx
+	div di
+
+	; sector # is 1-based count
+	inc dl
+	mov byte [read_sect], dl
+
+	; relative track # (ax) / headers count
+	; = absolute track # (ax), head number (dx)
+	xor dx, dx
+	div word [head_per_drv]
+
+	mov ch, al			; track(cylinder) #
+	mov cl, [read_sect]	; sector #
+	mov ah, 2			; service #
+	mov al, 1			; sector count
+	mov dh, dl			; head #
+	mov dl, [boot_drv]	; floppy
+	mov bx, si			; offset
+	int 0x13
+
+	; next sector to be read
+	inc byte [current_sect]
+
+	ret
+
+
+hello_msg	db "C"
+
+times 510-($-$$) db 0
+	dw 0xaa55
+
+}}}
+
+
+
+ * setup.asm
+{{{
+KERNEL_CODE_SEL		equ 0x08
+KERNEL_DATA_SEL		equ 0x10
+KERNEL_CODE64_SEL 	equ 0x18
+KERNEL_DATA64_SEL 	equ 0x20
+
+GDT_ADDR        equ 0x8000
+GDT_SIZE 		equ 0x1000 ; one page frame
+
+
+PML4_addr equ 0x90000     ; PML4 ???뵠?됰뗄??0x100000 ?袁⑺뒄??????
+PDP_addr equ 0x91000
+PDE_addr equ 0x92000
+PTE_addr equ 0x93000
+
+BIT_CR4_PAE equ 5
+BIT_CR4_PGE equ 7
+
+BIT_EFER_LME equ 8
+BIT_EFER_LMA equ 10
+BIT_EFER_SCE equ 0
+
+BIT_CR0_PE equ 0
+BIT_CR0_PG equ 31
+
+
+
+
+[bits 16]
+[org 0x9000]
+
+	align 8
+	
+	jmp 0x0:setup_start
+
+setup_start:
+
+
+    mov ax, cs        ; cs=ds=es=0x0
+    mov ds, ax
+    mov es, ax
+
+
+
+    ; tell BIOS that operating mode will be Long Mode
+    mov eax, 0xec00
+    mov ebx, 2
+    int 0x15
+
+
+
+    mov ax, 0xb800
+    mov es, ax
+    mov bx, 0x2
+    mov al, byte [setup_msg]
+    mov byte [es:bx], al
+    
+	
+	; clear GDT 
+	mov di, GDT_ADDR
+    xor ax, ax
+    mov cx, 4096/2 ; 7 page frames
+    cld
+    rep stosd 	; clear 4byte at once
+
+
+
+	; build GDT
+    lea si, [gdt]    ; source : ds:si=0x0:gdt
+    xor ax, ax
+    mov es, ax        ; destination : es:di=0x0:0x1000
+    mov di, GDT_ADDR
+    mov cx, 8*5    ; 7 descriptors
+
+    rep movsb
+
+    cli
+    lgdt [gdtr]
+
+
+
+    mov eax, cr0
+    or eax, (0x1<<BIT_CR0_PE)
+    mov cr0, eax
+
+
+
+    jmp dword KERNEL_CODE_SEL:protect_start
+
+
+ap_running:
+	mov dx, 0
+
+__ap_running:
+    mov ax, 0xb800
+    mov es, ax
+    mov bx, 79*2
+	mov byte [es:bx], dl
+
+	inc dl
+	jmp __ap_running
+
+
+
+[bits 32]
+	align 8
+protect_start:
+    mov ax, KERNEL_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
+    mov edi, 0xb8004
+    mov al, byte [protect_msg]
+    mov byte [edi], al
+
+
+
+
+
+    ; temporary stack for booting process
+    mov esp, 0xa0000
+
+
+
+    ;set PAE bit in CR4
+    mov eax, cr4
+    or eax, (0x1<<BIT_CR4_PAE) 
+    mov cr4, eax
+
+	;
+	; code to clear space of Paging-tables should be added here!!!
+	;
+    ; 0x90000 ~ 0x97000
+    mov edi, 0x90000
+    xor eax, eax
+    mov ecx, 7*4096 ; 7 page frames
+    cld
+    rep stosd 	; clear 4byte at once
+
+
+
+
+	; temporary memory mapping
+	; physical 0~8MB => linear 0~8MB (direct mapping)
+	; physical 0~8MB => linear 0xFFFF800000000000 ~ 0xFFFF800000800000 (kernel area)
+
+
+    ; set PML4[0] to PDP address
+    mov edi, PML4_addr
+    mov eax, PDP_addr
+    or eax, 0x7            ; User, Writable, Present
+    mov [es:edi], eax
+
+	; set PML4[128] to PDP address
+	; kernel resist at linear address 0xFFFF 8000 0010 0000
+	add edi, (8*0x100)	; 0x100th entry 
+	mov [es:edi], eax
+
+
+    ; set PDP[0] to PDE address
+    mov edi, PDP_addr
+    mov eax, PDE_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+
+    ; set the PDE[3:0] to 0~8M
+
+    mov edi, PDE_addr
+    mov eax, PTE_addr+0x7
+    mov ecx, 4 ; 4 PTEs = 2MB per a PTE * 4
+set_PDE:
+    mov [es:edi], eax
+    add eax, 0x1000
+    add edi, 8
+    dec ecx
+    jnz set_PDE
+
+    ; set 4 PTEs to 0~8M, one PTE covers 2MB
+
+    mov edi, PTE_addr
+    mov eax, 0x7
+    mov ecx, 2048 ; 8MB area = 2048 page frames
+set_PTE:
+    mov [es:edi], eax
+    add eax, 0x1000
+    add edi, 8
+    dec ecx
+    jnz set_PTE
+
+
+    ; set CR3 to address of PML4
+    mov eax, PML4_addr
+    mov cr3, eax
+
+
+
+
+
+
+    ; enable long mode by set EFER.LME bit
+
+    ; set MSR 0xc0000080 with RDMSR, WRMSR instruction
+    ; read "system programming guide 1 - appendix B"
+
+    mov ecx, 0xc0000080 	; EFER register address
+    rdmsr
+    or eax, (0x1<<BIT_EFER_LME)
+    wrmsr
+
+
+	; activate paging
+    mov eax, cr0
+    or eax, (0x1<<BIT_CR0_PG)
+    mov cr0, eax
+
+
+
+
+	; long jump is necessary
+    jmp KERNEL_CODE64_SEL:long_start
+
+
+
+setup_msg    db "a", 0
+protect_msg    db "O", 0
+
+processor_sig	db 0
+
+
+gdtr:
+    dw GDT_SIZE
+    dd GDT_ADDR
+
+
+gdt:
+    dd 0x00000000, 0x00000000
+    dd 0x0000FFFF, 0x00CF9A00 ; kernel code segment for protected mode
+    dd 0x0000FFFF, 0x00CF9200 ; kernel data segment for protected mode
+    dd 0x0000ffff, 0x00AF9A00 ; longmode kernel code segment, CS.L=1, CS.D=0
+    dd 0x0000FFFF, 0x00AF9200 ; longmode kernel data segment
+
+
+
+
+
+[bits 64]
+	align 8
+long_start:
+    
+
+	; test LMA((Long Mode Active) bit in EFER
+    mov ecx, 0xc0000080
+    rdmsr
+    and eax, (0x1<<BIT_EFER_LMA)
+	jnz longmode_ok
+	
+	jmp longmode_fail
+
+
+longmode_ok:
+
+
+
+
+
+
+    ; set PAE,PGE bit in CR4
+	; Writing cr4 is to flush TLB.
+    mov rax, cr4
+    or rax, (0x1<<BIT_CR4_PAE|0x1<<BIT_CR4_PGE) 
+    mov cr4, rax
+
+
+	; set SCE(System Call Enable) bit in EFER
+    mov ecx, 0xc0000080
+    rdmsr
+    or eax, (0x1<<BIT_EFER_SCE)
+    wrmsr
+
+
+
+	; only FS, GS are used in longmode, others are ignored
+
+	mov ax, 0
+	mov ds, ax
+	mov es, ax
+	mov ss, ax
+	mov fs, ax
+	mov gs, ax
+
+
+
+	
+
+    mov rdi, 0xb8006
+    mov al, byte [long_msg]
+    mov byte [rdi], al
+
+	
+
+	jmp $
+
+
+	add rdi, 2
+long_loop:
+    mov byte [rdi], al
+	add al, 1
+	jmp long_loop
+	
+
+longmode_fail:
+	mov rdi, 0xb8000
+	mov al, 'X'
+	mov byte [rdi], al
+
+    jmp $
+
+long_msg    db "L", 0
+memory_size dq 0
+
+
+
+
+
+times 4096-($-$$) db 0
+
+}}}
+
+
+
+ * Makefile
+{{{
+# How to compile 64bit kernel refers to http://wiki.osdev.org/Creating_a_64-bit_kernel
+# and the other options refer gcc manual & http://www.osx86.org
+
+
+BOOT_SRCS = bootsect.asm setup.asm
+BOOT_IMG = boot.img
+
+
+all:$(BOOT_IMG)
+	cat $(BOOT_IMG) > floppy.img
+
+$(BOOT_IMG):$(BOOT_SRCS)
+	nasm -o bootsect.img bootsect.asm
+	nasm -o setup.img setup.asm
+	cat bootsect.img setup.img > $@
+
+clean:
+	rm -f *.o *.img
+}}}
+
+
+== 참고 자료 ==
+
+
+ * http://kkamagui.tistory.com/ : 64bit 커널 만드신 분
+ * http://osinside.net/osinside/osinside.htm : OS 이론/원리에 대한 설명, 코드 설명도 있음
+ * http://micingamja.egloos.com/ : 64bit 커널 만들기 중 (http://kldp.org/taxonomy/term/3663)
+ * osdev 위키 : http://wiki.osdev.org/X86-64
+ * 리눅스 커널의 부팅 설명 HOWTO : http://tldp.org/HOWTO/Linux-i386-Boot-Code-HOWTO/index.html

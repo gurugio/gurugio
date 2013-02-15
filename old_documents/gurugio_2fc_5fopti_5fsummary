@@ -1,0 +1,105 @@
+[[TableOfContents]]
+
+= C 언어 최적화 요약 =
+
+
+== ROM데이터 or 실행파일 크기 줄이기 ==
+
+||컴파일러 최적화 옵션||코드 사이즈 최적화 선택||
+||초기화된 전역데이터,static지역변수||초기화가 꼭 필요하지 않으면 선언만||
+||다중분기(반복적인 if-else)||switch-case로 변경||
+||값이 변하지 않는 데이터가 있는가?||#define이나 const로 대체||
+||플래그로 사용되는 전역 변수가 많나?||구조체의 Bit필드로 변경||
+||매크로 함수||자주 재사용되면 함수로 변경||
+||몇몇 함수에서만 사용되는 전역 변수||지역변수로 사용하고 함수 인자로 전달||
+
+
+== RAM데이터 or 스택 용량 줄이기 ==
+
+||작은 기능만 가진 짧은 함수||큰 함수로 합체||
+||지역변수||전역변수로 변경||
+||함수 인자||전역변수로 변경||
+||간단한 함수||매크로로 작성||
+||함수의 call depth||call depth를 최소화||
+
+
+== 실행 시간 줄이기 ==
+
+||컴파일러 최적화 옵션||속도 최적화 선택||
+||실행 시간이 긴 루프내의 변수||register로 선언||
+||volatile 선언 변수||꼭 volatile로 해야 하나?||
+||많이 사용되는 루틴||인라인 어셈블리로 설계||
+||조건식에 사용된 복잡한 수식||조건식 이전에 계산처리||
+||switch-case나 if-else||look-up 테이블로 처리||
+||조건문(if, switch)||거짓/참 조건이 빈번한 것들을 앞으로 이동||
+||플래그 변수||각각을 개별 변수로 선언||
+||자주 쓰는 전역 변수나 함수의 인자||local, register로 변경||
+||분기 명령||하나의 수식으로 바꿀 수 있나?||
+
+
+== 예제 - const 데이터 사용 ==
+
+{{{:
+#include <stdio.h>
+
+// compile
+// gcc -Wall -O1 -g const_opti.c
+// (최적화 옵션이 없으면 case1,2 동일한 코드가 생성됨)
+// gdb a.out
+// disass main
+
+//const int const_data[4] = {0x11, 0x22, 0x33, 0x44}; // case 1 - const data
+int const_data[4] = {0x11, 0x22, 0x33, 0x44};                   // case 2 - rw data
+int rw_data[4] = {0x111, 0x222, 0x333, 0x444};
+
+
+
+int main(void)
+{
+
+        int a, b, c, d;
+
+        a = const_data[0];
+        b = const_data[1];
+
+        c = rw_data[0];
+        d = rw_data[1];
+
+        c += d;
+        d += c;
+        c++;
+        d++;
+
+        printf("%x %x %x %x\n", a, b, c, d);
+
+        return 0;
+}
+
+
+실헝 case 1.
+
+const int를 사용할 때:
+
+0x08048397 <main+35>:   mov    %eax,0x10(%esp) -> d 값을 스택에 저장
+0x0804839b <main+39>:   mov    %edx,0xc(%esp)  -> c 값을 스택에 저장
+0x0804839f <main+43>:   movl   $0x22,0x8(%esp) -> b 값대신 상수 사용
+0x080483a7 <main+51>:   movl   $0x11,0x4(%esp) -> a 값대신 상수 사용
+0x080483af <main+59>:   movl   $0x804848c,(%esp) -> 포맷 문자열
+0x080483b6 <main+66>:   call   0x80482d8 <printf@plt>
+
+
+실험 case 2.
+
+그냥 int를 사용할 때:
+
+0x08048397 <main+35>:   mov    %eax,0x10(%esp)  -> d 값을 스택에 저장
+0x0804839b <main+39>:   mov    %edx,0xc(%esp)   -> c 값을 스택에 저장
+0x0804839f <main+43>:   mov    0x80495b0,%eax   -> b 값을 메모리에서 읽기
+0x080483a4 <main+48>:   mov    %eax,0x8(%esp)   -> b 값을 스택에 저장
+0x080483a8 <main+52>:   mov    0x80495ac,%eax   -> a 값을 메모리에서 읽어서 스택에 저장
+0x080483ad <main+57>:   mov    %eax,0x4(%esp)
+0x080483b1 <main+61>:   movl   $0x804848c,(%esp)
+0x080483b8 <main+68>:   call   0x80482d8 <printf@plt>
+
+
+}}}

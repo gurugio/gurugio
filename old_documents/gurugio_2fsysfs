@@ -1,0 +1,1453 @@
+''' Linux Device Driver Model '''을 공부하면서 기본적인 구조에 대해 요약했습니다. 작업 후 pdf로 변환해서 다시 배포할 예정입니다.
+
+
+
+''참고 문서''
+
+- http://lwn.net/Articles/driver-porting/ 에 있는 다음 문서들
+ - A device model overview (November, 2003; 2.6.0-test10); an introductory look at the Linux device model and sysfs, with definitions of some commonly encountered terms. 
+
+ - The zen of kobjects (October, 2003; 2.6.0-test6); an attempt to demystify the kobject abstraction and its use in the kernel. 
+
+ - kobjects and sysfs (October, 2003; 2.6.0-test8); a description of the interaction between the kobject type and its representation in sysfs. 
+
+ - kobjects and hotplug events (October, 2003; 2.6.0-test6); an explanation of the kset hotplug operations and how they can be used to control how hotplug events are reported to user space. This article was written by Greg Kroah-Hartman. 
+
+ - Examining a kobject hierarchy (October, 2003; 2.6.0-test9); a visual exploration of the device model data structures behind /sys/block. 
+
+ - Device classes (November, 2003; 2.6.0-test10); how the device class mechanism works.
+
+- Documentations/kobject.txt
+
+- Documentations/sysfs-rules.txt
+
+- Documentations/filesystems/sysfs.txt
+
+- 리눅스 디바이스 드라이버 3rd edition
+
+- 리눅스 커널의 이해 3rd edition
+
+[[TableOfContents]]
+
+
+
+= 디바이스 모델의 개념 =
+
+== 디바이스 모델의 역할 ==
+
+드라이버 모델은 원래 시스템에 존재하는 하드웨어들을 관리하여 전원 관리의 효율을 높이고자 고안된 것이었다.
+원래 의미는 조금 퇴색되었지만 현재는 디바이스를 관리하는 역할을 하고 있다.
+
+중요한 역할들을 나열해보면:
+
+1. 어떤 장치가 있는가, 그것들의 전원 상태나 연결된 버스의 종류, 장치를 관리하는 드라이버는 무엇인지 등의 정보 관리
+
+2. 어떤 버스들이 서로 연결되어 있는지 (USB 컨트롤러가 PCI 버스에 연결된 것 등)
+어느 장치들의 어떤 버스에 연결되어 있는지 등 시스템에서 사용하는 버스의 구조 정보
+
+3. 시스템에 있는 장치들을 지원하기 위해 어떤 디바이스 드라이버가 있는지에 대한 정보
+
+4. 어떤 종류의 장치들이 있고, 어떤 클래스에 속하는지에 대한 정보. 디바이스 모델을 통해
+마우스 장치가 시스템 어디에 연결되어 있는지 알 수 있음.
+
+5. 장치가 현재 사용되고 있는지 알 수 있는 참조 카운터 역할
+
+종합해보면 디바이스 모델은 현재 시스템의 하드웨어 구성에 대한 정보를 관리하는 역할을 한다.
+
+
+== 기본 용어 ==
+
+'''디바이스 device''' : 버스에 연결되어 있는 장치. 물리적인 장치일 수도 있고 가성적인 장치일 수도 있다.
+
+'''드라이버 driver''' : 디바이스에 연결되어서 디바이스를 관리하거나 동작시키는 기능들을 수행하는 소프트웨어
+
+'''버스 bus''' : 한 디바이스가 다른 디바이스들과 연결될 수 있는 접점
+
+'''클래스 class''' : 특정한 방식으로 동작하는 디바이스들의 타입. 시리얼 포트나 파티션을 클래스라고 부를 수 있다.
+
+'''서브시스템 subsystem''' : 시스템의 구조를 top-down 방식으로 보았을 때 가장 윗 지점. 예를 들어 버스에 따라
+시스템의 구조를 그려보면 다양한 버스들이 있고 그 밑에 각각의 버스에 연결된 장치들이 있을 것이다.
+이 구조의 가장 꼭지점이 하나의 서브 시스템이 된다. 버스 뿐만 아니라 클래스나 네트워크 시스템 등 다양한
+서브시스템이 있을 수 있다.
+(/sys/devices나 /sys/bus가 서브시스템이 된다.)
+
+'''커널 객체 kobject''' : 시스템에 존재하는 모든 객체들의 공통적인 특성을 표현하기 위해 만들어진 객체.
+객체지향 언어로 예를 들면 모든 객체들이 상속받은 객체가 된다. kobject는 자신을 포함한 객체의
+이름, 참조 카운터, 부모 객체, 타입 등에 대한 정보를 관리한다. 디바이스 모델에 관련된 거의 모든 객체는
+kobject를 내부 어딘가에 가지고 있을 것이다.
+
+'''커널 객체 집합 kset''' : 동일한 타입의 kobject의 집합. 하나의 서브시스템을 나타낼 수도 있고
+서브시스템 안에 여러개의 kset이 있을 수도 있다. 만약 핫플러그 이벤트가 발생하면, kobject가 kset에
+연결되거나 연결이 끊어지게 되고 이때의 처리를 담당한다.
+
+
+
+= 관련 데이터 구조 (2.6.23버전 기준) =
+
+
+kobject와 관련된 모든 데이터 구조는 include/linux/kobject.h 에 선언되어 있음
+
+
+== kobject ==
+
+kobject는 원래 커널 코드 안에서 객체의 참조 카운터를 효과적으로 관리하기 위해
+고안되었다. 점차 커널 버전이 높아지면서 여러가지 기능들이 추가되어서
+sysfs와 디바이스 모델의 인터페이스 역할까지 하게 되었다. 디바이스 드라이버를 작성할 때는
+직접적으로 사용할 일이 거의 없을 것이다. 대부분의 커널 데이터들이 미리 포함하고 있기 때문이다.
+하지만 커널이 디바이스 드라이버를 어떻게 관리하는지를 알기 위해서는 반드시 알아두어야 한다.
+
+
+=== struct kobject ===
+
+kobject는 다음과 같이 선언된 구조체이다.
+
+{{{
+struct kobject {
+        const char              * k_name;
+        char                    name[KOBJ_NAME_LEN];
+        struct kref             kref;
+        struct list_head        entry;
+        struct kobject          * parent;
+        struct kset             * kset;
+        struct kobj_type        * ktype;
+        struct sysfs_dirent     * sd;
+        wait_queue_head_t       poll;
+};
+
+}}}
+
+k_name: 이름으로 kobject를 검색하는 것이 아니므로 고유한 이름일 필요 없음. 
+단 같은 sysfs에서는 동일한 이름이 있으면 안됨
+name: 만약 kobject에 지정된 이름이 KOBJ_NAME_LEN 보다 짧다면 name 필드에 정적으로 저장된다.
+kref: atomic_t 타입의 정수. 참조 카운터로 사용.
+parent: 객체의 부모. kset이 될수도 있음.
+kset: kobject가 속한 객체의 집합
+ktype: kobject의 타입을 나타내는 kobj_type 정보
+sysfs_dirent: sysfs의 디렉토리 경로
+poll: 
+
+
+=== container_of 매크로 ===
+
+kobject는 그 자체만으로는 쓰임새가 없고 주로 다른 객체 안에 포함되서 사용된다.
+대부분의 sysfs 관련 함수나 디바이스 드라이버 등에서 kobject의 포인터를 인자로 전달받아서
+사용한다. 그래야 드라이버 작성자가 어떤 데이터 구조를 만들어서 사용해도
+인터페이스는 통일될 수 있다.
+그래서 kobject의 포인터에서 kobject가 속한 객체의 포인터를 계산하는 일이 많아지고
+이를 위한 container_of 매크로가 만들어졌다.
+
+
+예를 들어 커널 2.6.23에서 include/linux/cdev.h에는 다음과 같이 문자 장치를 표현하는
+cdev 구조체가 선언되어 있다.
+
+{{{
+
+13 struct cdev {
+14   struct kobject kobj;
+15   struct module *owner;
+16   const struct file_operations *ops;
+17   struct list_head list;
+18   dev_t dev;
+19   unsigned int count;
+20 };
+
+}}}
+
+만약 kobject의 주소가 kp라는 변수에 저장되어 있다면 container_of 매크로를 이용해서
+cdev의 주소를 알 수 있다. 다음과 같이 사용된다.
+
+
+struct cdev *device = container_of(kp, struct cdev, kobj);
+
+kp: kobject의 주소
+struct cdev: kobject를 포함하는 구조체의 이름
+kobj: kobject 필드의 변수 이름
+
+
+다음은 container_of 매크로가 정의된 코드이다.
+
+{{{
+
+/**
+ * container_of - cast a member of a structure out to the containing structure
+ * @ptr:        the pointer to the member.
+ * @type:       the type of the container struct this is embedded in.
+ * @member:     the name of the member within the struct.
+ *
+ */
+#define container_of(ptr, type, member) ({                      \
+        const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+        (type *)( (char *)__mptr - offsetof(type,member) );})
+
+}}}
+
+
+=== kobject의 초기화 ===
+
+
+kobject를 초기화하는 함수는 kobject_init 이다.
+
+{{{
+
+124 /**
+125  *  kobject_init - initialize object.
+126  *  @kobj:  object in question.
+127  */
+128 void kobject_init(struct kobject * kobj)
+129 {
+130   if (!kobj)
+131     return;
+132   kref_init(&kobj->kref);  ''kref->refcount 값을 1로 셋팅''
+133   INIT_LIST_HEAD(&kobj->entry);
+134   init_waitqueue_head(&kobj->poll);
+135   kobj->kset = kset_get(kobj->kset); ''커널 객체가 속한 kset의 레퍼런스 카운터를 증가시킴''
+136 }
+
+}}}
+
+kobject_init은 kobject의 참고 카운터와 리스트 포인터를 초기화한다.
+
+그런데 kobject의 name 필드를 초기화하지는 않는다. 이름은 사용자가 직접 지정해야 한다.
+kobject의 이름을 지정하기 위해서 임의로 문자열을 복사해서는 안되고
+kobject_set_name 함수를 사용해야 한다.
+
+kobject_set_name 함수는 printk 와 사용법이 동일하다. 포맷 문자열을 사용해서
+kobject의 이름을 만들어줄 수 있다.
+
+{{{
+
+246 /**
+247  *  kobject_set_name - Set the name of an object
+248  *  @kobj:  object.
+249  *  @fmt: format string used to build the name
+250  *
+251  *  If strlen(name) >= KOBJ_NAME_LEN, then use a dynamically allocated
+252  *  string that @kobj->k_name points to. Otherwise, use the static
+253  *  @kobj->name array.
+254  */
+255 int kobject_set_name(struct kobject * kobj, const char * fmt, ...)
+256 {
+257   int error = 0;
+258   int limit = KOBJ_NAME_LEN;
+259   int need;
+260   va_list args;
+261   char * name;
+262
+
+vsprintf 함수를 이용해서 kobj->name 필드에 이름을 저장한다.
+
+263   /*
+264    * First, try the static array
+265    */
+266   va_start(args,fmt);
+267   need = vsnprintf(kobj->name,limit,fmt,args);
+268   va_end(args);
+269   if (need < limit)
+270     name = kobj->name;
+
+최대 KOBJ_NAME_LEN 바이트까지 저장할 수 있다.
+이름이 KOBJ_NAME_LEN 길이보다 짧으면 kobj->name에 이름을 저장하고
+k_name에 name의 포인터를 저장한다.
+
+만약 함수 인자로 지정된 이름이 이것보다 길어지면
+KOBJ_NAME_LEN+1 바이트로 다시 시도해본다.
+이때 KOBJ_NAME_LEN+1 바이트로 시도해서 성공하면
+k_name 필드에는 동적으로 할당된 메모리의 포인터가 저장된다.
+
+결국 kobject의 이름은 k_name에 저장되는 것이고
+name 필드를 kobject의 이름이라고 생각하면 안된다.
+
+271   else {
+272     /*
+273      * Need more space? Allocate it and try again
+274      */
+275     limit = need + 1;
+276     name = kmalloc(limit,GFP_KERNEL);
+277     if (!name) {
+278       error = -ENOMEM;
+279       goto Done;
+280     }
+281     va_start(args,fmt);
+282     need = vsnprintf(name,limit,fmt,args);
+283     va_end(args);
+284
+285     /* Still? Give up. */
+286     if (need >= limit) {
+287       kfree(name);
+288       error = -EFAULT;
+289       goto Done;
+290     }
+291   }
+292
+
+만약 이전에 사용되던 이름이 있다면 지운다.
+
+293   /* Free the old name, if necessary. */
+294   if (kobj->k_name && kobj->k_name != kobj->name)
+295     kfree(kobj->k_name);
+296
+
+최종적으로 kobject->k_name 필드에 이름이 저장된다.
+
+297   /* Now, set the new name */
+298   kobj->k_name = name;
+
+이 함수는 실패할 수 있으므로 항상 반환값을 확인해야 한다.
+
+299  Done:
+300   return error;
+301 }
+302
+
+}}}
+
+
+''그 외 ktype, kset, parent 등의 필드들은 어떻게 초기화하나?''
+
+
+=== kobject의 참조 카운터 ===
+
+
+kobject의 주요 기능 중 하나가 참조 카운터로서의 역할이다. kobject를 포함한 어떤 객체가
+누군가에 의해 참조되고 있을 때, 참조되고 있는 상태라는 것을 알 수 있도록 하고,
+계속 존재할 수 있도록 해주어야 한다.
+
+kobject_get, kobject_put 함수가 kobject 내부의 참조 카운터를 처리한다.
+
+{{{
+
+458 /**
+459  *  kobject_get - increment refcount for object.
+460  *  @kobj:  object.
+461  */
+462
+463 struct kobject * kobject_get(struct kobject * kobj)
+464 {
+465   if (kobj)
+466     kref_get(&kobj->kref);
+467   return kobj;
+468 }
+
+
+497 /**
+498  *  kobject_put - decrement refcount for object.
+499  *  @kobj:  object.
+500  *
+501  *  Decrement the refcount, and if 0, call kobject_cleanup().
+502  */
+503 void kobject_put(struct kobject * kobj)
+504 {
+505   if (kobj)
+506     kref_put(&kobj->kref, kobject_release);
+507 }
+
+}}}
+
+
+kobject_get 함수는 kobject의 참조 카운터를 증가시키고 kobject의 포인터를 반환한다.
+
+그런데 kobject만으로는 경쟁 상태를 완전히 방지할 수 없다. 그래서 문자 장치를 처리하는
+cdev_get 함수에서는 kobject 뿐만 아니라 모듈에 대한 참조 카운터도 고려한다.
+먼저 모듈의 참조 카운터에 접근할 수 있는지 확인해서 모듈의 참조 카운터를
+증가시킨 후에 kobject의 참조 카운터를 증가시킨다.
+
+{{{
+
+335 static struct kobject *cdev_get(struct cdev *p)
+336 {
+337   struct module *owner = p->owner;
+338   struct kobject *kobj;
+339
+340   if (owner && !try_module_get(owner))
+341     return NULL;
+342   kobj = kobject_get(&p->kobj);
+343   if (!kobj)
+344     module_put(owner);
+345   return kobj;
+346 }
+
+}}}
+
+
+=== struct kref ===
+
+
+kobject의 레퍼런스 카운터 값은 struct kref 타입으로 선언되어 있는데
+include/linux/kref.h에 다음과 같이 atomic_t 타입으로 선언되어 있다.
+
+{{{
+
+23 struct kref {  
+24   atomic_t refcount; 
+25 };  
+
+}}}
+
+따라서 일반적인 정수 값을 처리하듯이 사용할 수 없고 atomic_inc, atomic_set 등의
+atomic 변수를 다루는 매크로를 사용해야 한다.
+따라서 kobject 등의 레퍼런스 카운터를 처리하기 위한 함수를 별도로 만들어주었다.
+
+kref_init, kref_get, kref_put 함수들이 kobject 구조체의 레퍼런스 카운터를 초기화하고, 
+늘리고 줄이는 일을 한다.
+
+kref_init/get 함수는 단순히 카운터 변수 값을 다루는 일만 하지만
+kref_put 함수는 카운터 값을 감소시키고 카운터가 0이 되어서
+참조가 없어졌을 때의 처리까지 해준다.
+kref_put 함수가 호출되고 카운터 변수가 0이 되었다는 것은
+해당 kref를 포함하고 있는 데이터가 해제되었다는 것이다.
+
+
+{{{
+
+lib/kref.c
+
+ 17 /**
+ 18  * kref_init - initialize object.
+ 19  * @kref: object in question.
+ 20  */
+ 21 void kref_init(struct kref *kref)
+ 22 {
+ 23   atomic_set(&kref->refcount,1); ''1로 초기화''
+ 24   smp_mb();
+ 25 }
+ 26
+ 27 /**
+ 28  * kref_get - increment refcount for object.
+ 29  * @kref: object.
+ 30  */
+ 31 void kref_get(struct kref *kref)
+ 32 {
+ 33   WARN_ON(!atomic_read(&kref->refcount));
+ 34   atomic_inc(&kref->refcount); ''1 증가''
+ 35   smp_mb__after_atomic_inc();
+ 36 }
+ 37
+ 38 /**
+ 39  * kref_put - decrement refcount for object.
+ 40  * @kref: object.
+ 41  * @release: pointer to the function that will clean up the object when the
+ 42  *       last reference to the object is released.
+ 43  *       This pointer is required, and it is not acceptable to pass kfree
+ 44  *       in as this function.
+ 45  *
+ 46  * Decrement the refcount, and if 0, call release().
+ 47  * Return 1 if the object was removed, otherwise return 0.  Beware, if this
+ 48  * function returns 0, you still can not count on the kref from remaining in
+ 49  * memory.  Only use the return value if you want to see if the kref is now
+ 50  * gone, not present.
+ 51  */
+ 52 int kref_put(struct kref *kref, void (*release)(struct kref *kref))
+ 53 {
+ 54   WARN_ON(release == NULL);
+ 55   WARN_ON(release == (void (*)(struct kref *))kfree);
+ 56
+
+atomic_dec_and_test 매크로는 atomic_t 변수를 1 감소시킨 후
+감소된 값이 0인지 검사한다.
+만약 0이 되면 참 값을 반한되고, 함수 인자로 받은 release 함수를 호출한다.
+
+ 57   if (atomic_dec_and_test(&kref->refcount)) {
+ 58     release(kref);
+ 59     return 1;
+ 60   }
+ 61   return 0;
+ 62 }
+
+}}}
+
+
+=== kobject의 해지 ===
+
+
+kobject_put 함수에서 kref_put 함수를 호출하면서 relase 함수로
+kobject_release 함수를 전달한다. 
+만약 kobject의 참조 카운터가 0이 되면 kobject_release 함수가 호출되고
+kobject_release 함수는 kobject_cleanup 함수를 호출한다.
+kobject_cleanup 함수는 kobject에 할당된 자원을 해지하는 일을 한다.
+
+
+{{{
+
+470 /**
+471  *  kobject_cleanup - free kobject resources.
+472  *  @kobj:  object.
+473  */
+474
+475 void kobject_cleanup(struct kobject * kobj)
+476 {
+477   struct kobj_type * t = get_ktype(kobj);
+478   struct kset * s = kobj->kset;
+479   struct kobject * parent = kobj->parent;
+480
+481   pr_debug("kobject %s: cleaning up\n",kobject_name(kobj));
+
+이름이 name 필드에 정적으로 저장된게 아니라
+k_name에 동적으로 할당되어서 저장되어 있으면 k_name의 메모리 해지
+
+482   if (kobj->k_name != kobj->name)
+483     kfree(kobj->k_name);
+484   kobj->k_name = NULL;
+
+kset이 있으면 kset의 해지 함수 호출
+
+485   if (t && t->release)
+486     t->release(kobj);
+487   if (s)
+488     kset_put(s);
+
+부모 kobject가 있으면 부모 kobject의 참조 카운터 감소
+
+489   kobject_put(parent);
+490 }
+491
+492 static void kobject_release(struct kref *kref)
+493 {
+494   kobject_cleanup(container_of(kref, struct kobject, kref));
+495 }
+
+}}}
+
+
+
+
+== kset ==
+
+
+=== kset 의 개념 ===
+
+
+공통된 특성을 가진 kobject들의 집합을 kset으로 관리한다. kobject가 kset에 등록되는 순간부터
+sysfs에 kobject가 나타나므로 kobject를 sysfs에 나타내기 위해 사용한다고 할 수도 있다.
+
+include/linux/kobject.h 에 다음과 같이 선언되어 있다.
+
+{{{
+
+struct kset {
+        struct kobj_type        * ktype;
+        struct list_head        list;
+        spinlock_t              list_lock;
+        struct kobject          kobj;
+        struct kset_uevent_ops  * uevent_ops;
+};
+
+}}}
+
+=== kset에 kobject를 추가하는 함수 ===
+
+kset에 kobject를 추가하기 위해서 kobject_register 함수를 사용한다.
+
+kobject_register 함수를 호출하기 전에 미리
+kobject_set_name 함수로 kobject의 이름을 설정하고
+kobject가 포함될 kset의 포인터를 저장해주어야 한다.
+그 후에 kobject_register를 호출하면, kobject_register는 다음과 같은 일을 한다.
+
+1. 객체의 참조 카운터를 1로 초기화 (kobject_init)
+2. 기타 필드를 초기화 (kobject_init)
+3. 부모 객체의 팜조 카운터 증가 (kobject_add)
+4. kset이 미리 정의되어 있으면 kset의 리스트에 연결
+(kset은 kobject_register를 호출하기 전에 설정되어야 함) (kobject_add)
+5. sysfs에 객체를 나타냄 (kobject_add)
+
+결국 kobject_register는 kobject_init과 kobject_add를 합쳐놓은 것이다.
+kobject를 처음 만들때부터 kobject_init 함수를 사용할 필요없이
+바로 kobject_register 함수를 호출해서 kobject를 사용할 수도 있다.
+
+kobject_register를 사용하지 않고 kobject_init만 사용할 수도 있다.
+그렇게 된다면 kobject를 sysfs에 나타내지 않고 사용하는 것이다.
+
+kobject_register와 반대로 일을 하는 kobject_unregister 함수도 있다.
+kobject_unregister 함수는 sysfs에서 kobject의 디렉토리를 지우는
+kobject_del 함수를 호출하고 kobject의 참조 카운터를 줄이는 kobject_put 함수를 호출한다.
+
+
+{{{
+
+228 /**
+229  *  kobject_register - initialize and add an object.
+230  *  @kobj:  object in question.
+231  */
+232
+233 int kobject_register(struct kobject * kobj)
+234 {
+235   int error = -EINVAL;
+236   if (kobj) {
+237     kobject_init(kobj); ''커널 객체의 필드를 초기화, 레퍼런스 카운터를 1로 설정''
+238     error = kobject_add(kobj); ''kset에 kobject 연결 및 sysfs에 kobject 정보 출력''
+239     if (!error)
+240       kobject_uevent(kobj, KOBJ_ADD);
+241   }
+242   return error;
+243 }
+
+
+
+218 /**
+219  *  kobject_add - add an object to the hierarchy.
+220  *  @kobj:  object.
+221  */
+222 int kobject_add(struct kobject * kobj)
+223 {
+224   return kobject_shadow_add(kobj, NULL);
+225 }
+
+
+159 /**
+160  *  kobject_shadow_add - add an object to the hierarchy.
+161  *  @kobj:  object.
+162  *  @shadow_parent: sysfs directory to add to.
+163  */
+164
+165 int kobject_shadow_add(struct kobject *kobj, struct sysfs_dirent *shadow_parent)
+166 {
+167   int error = 0;
+168   struct kobject * parent;
+169
+170   if (!(kobj = kobject_get(kobj)))
+171     return -ENOENT;
+172   if (!kobj->k_name)
+173     kobj->k_name = kobj->name;
+174   if (!*kobj->k_name) {
+175     pr_debug("kobject attempted to be registered with no name!\n");
+176     WARN_ON(1);
+177     kobject_put(kobj);
+178     return -EINVAL;
+179   }
+180   parent = kobject_get(kobj->parent); ''부모가 되는 커널 객체의 참조 카운터 증가''
+181
+182   pr_debug("kobject %s: registering. parent: %s, set: %s\n",
+183      kobject_name(kobj), parent ? kobject_name(parent) : "<NULL>",
+184      kobj->kset ? kobj->kset->kobj.name : "<NULL>" );
+185
+186   if (kobj->kset) { ''객체가 어떤 kset에 포함되어 있으면''
+
+kset은 항상 다른 프로세스와 동시에 접근될 수 있다. 따라서 kset의 내용을 수정하기 전에는
+반드시 스핀락을 잠궈야 한다.
+
+187     spin_lock(&kobj->kset->list_lock); 
+188
+189     if (!parent) 
+
+만약 kset이 지정되어 있는데 부모가 없는 상태이면 kset 내부의 kobject를 부모로 설정한다. 
+
+190       parent = kobject_get(&kobj->kset->kobj);
+191
+192     list_add_tail(&kobj->entry,&kobj->kset->list); ''객체가 속한 kset에 객체를 연결한다''
+193     spin_unlock(&kobj->kset->list_lock);
+194     kobj->parent = parent;
+195   }
+196
+
+kset도 지정되어 있지 않고 부모도 없는 상태라면 /sys/ 디렉토리에 kobject의 이름대로
+디렉토리를 만든다.
+
+197   error = create_dir(kobj, shadow_parent); ''sysfs에 객체를 나타낸다''
+198   if (error) {
+199     /* unlink does the kobject_put() for us */
+200     unlink(kobj);
+201     kobject_put(parent);
+202
+203     /* be noisy on error issues */
+204     if (error == -EEXIST)
+205       printk(KERN_ERR "kobject_add failed for %s with "
+206              "-EEXIST, don't try to register things with "
+207              "the same name in the same directory.\n",
+208              kobject_name(kobj));
+209     else
+210       printk(KERN_ERR "kobject_add failed for %s (%d)\n",
+211              kobject_name(kobj), error);
+212     dump_stack();
+213   }
+214
+
+정상적으로 수행되면 널 값을 반환한다.
+
+215   return error;
+216 }
+
+283 static inline int kobject_uevent(struct kobject *kobj, enum kobject_action action)
+284 { return 0; } ''아무일도 하지 않음, 왜?''
+
+
+435 void kobject_del(struct kobject * kobj)
+436 {
+437   if (!kobj)
+438     return;
+439   sysfs_remove_dir(kobj);
+440   unlink(kobj);
+441 }
+442
+443 /**
+444  *  kobject_unregister - remove object from hierarchy and decrement refcount.
+445  *  @kobj:  object going away.
+446  */
+447
+448 void kobject_unregister(struct kobject * kobj)
+449 {
+450   if (!kobj)
+451     return;
+452   pr_debug("kobject %s: unregistering\n",kobject_name(kobj));
+453   kobject_uevent(kobj, KOBJ_REMOVE);
+454   kobject_del(kobj);
+455   kobject_put(kobj);
+456 }
+
+
+
+}}}
+
+
+=== kset 관리 함수 ===
+
+kset을 초기화하고 등록하는 등의 인터페이스 함수들은
+kobject와 동일하다. 또한 각 함수들의 코드를 살펴보면
+결국은 kset 내부에 있는 kobject를 처리하는 일을 한다.
+
+kset_init은 kset 내부의 kobject를 가지고 kobject_init 함수를 호출하고
+kset_add나 kset_register, kset_unregister 함수도 kset 내부의 kobject를 가지고
+kobject_add, kobject_register, kobject_unregister 함수를 호출한다.
+
+kset에도 이름이 있다. kset 안의 kobject 에 이름을 저장하면 된다.
+kset 자체가 kobject를 사용하는 하나의 예를 보여준다고 생각하면 된다.
+
+
+{{{
+
+569 /**
+570  *  kset_init - initialize a kset for use
+571  *  @k: kset
+572  */
+573
+574 void kset_init(struct kset * k)
+575 {
+576     kobject_init(&k->kobj);
+577     INIT_LIST_HEAD(&k->list);
+578     spin_lock_init(&k->list_lock);
+579 }
+580
+581
+582 /**
+583  *  kset_add - add a kset object to the hierarchy.
+584  *  @k: kset.
+585  */
+586
+587 int kset_add(struct kset * k)
+588 {
+589     return kobject_add(&k->kobj);
+590 }
+591
+592
+593 /**
+594  *  kset_register - initialize and add a kset.
+595  *  @k: kset.
+596  */
+597
+598 int kset_register(struct kset * k)
+599 {
+600     int err;
+601
+602     if (!k)
+603         return -EINVAL;
+604
+605     kset_init(k);
+606     err = kset_add(k);
+607     if (err)
+608         return err;
+609     kobject_uevent(&k->kobj, KOBJ_ADD);
+610     return 0;
+611 }
+
+614 /**
+615  *  kset_unregister - remove a kset.
+616  *  @k: kset.
+617  */
+618
+619 void kset_unregister(struct kset * k)
+620 {
+621     if (!k)
+622         return;
+623     kobject_unregister(&k->kobj);
+624 }
+625
+
+}}}
+
+
+
+== kobj_type ==
+
+kobject의 특성을 표현한다. 여기서 말하는 특성은 결국 /sys 디렉토리에 나타나는 파일을 말한다.
+
+{{{
+
+struct kobj_type {
+        void (*release)(struct kobject *);
+        struct sysfs_ops        * sysfs_ops;
+        struct attribute        ** default_attrs;
+};
+
+}}}
+
+include/linux/sysfs.h
+
+{{{
+
+ 24 /* FIXME
+ 25  * The *owner field is no longer used, but leave around
+ 26  * until the tree gets cleaned up fully.
+ 27  */
+ 28 struct attribute {
+ 29   const char    * name;
+ 30   struct module   * owner;
+ 31   mode_t      mode;
+ 32 };
+
+ 75 struct sysfs_ops {
+ 76   ssize_t (*show)(struct kobject *, struct attribute *,char *);
+ 77   ssize_t (*store)(struct kobject *,struct attribute *,const char *, size_t);
+ 78 };
+
+}}}
+
+
+release: kobject_put 함수에서 kobject의 참조 카운터가 0이 되었을 때 kobject_release->kobject_cleanup 함수에서 호출된다.
+kobject를 없앨 때 특성 파일에 필요한 처리를 하는 함수를 만든다.
+특성 파일을 만들면서 할당했던 메모리를 해제하는 등의 일을 한다.
+
+attribute 구조체: /sys 에 kobject의 이름으로 만든 디렉토리 밑에 생성할 파일의 이름과 
+
+
+
+
+
+== subsystem: 객체의 집합 관리 ==
+
+''' 2.6.23버전에는 subsystem이라는 구조체가 없어지고 객체 집합을 관리하기 위해 kset을 활용. 다음 매크로가 서브시스템을 생성함 '''
+
+서브시스템을 선언하는 매크로이다. kset의 이름, 타입, 이벤트 처리 함수를 지정하면
+kset의 각 필드에 저장하면서 구조체를 만드는 일을 한다.
+
+
+{{{
+
+
+#define decl_subsys(_name,_type,_uevent_ops) \
+struct kset _name##_subsys = { \
+        .kobj = { .name = __stringify(_name) }, \
+        .ktype = _type, \
+        .uevent_ops =_uevent_ops, \
+}
+
+구조체 이름과 kset 이름을 다르게 지정할 때 사용하는 매크로
+
+#define decl_subsys_name(_varname,_name,_type,_uevent_ops) \
+struct kset _varname##_subsys = { \
+        .kobj = { .name = __stringify(_name) }, \
+        .ktype = _type, \
+        .uevent_ops =_uevent_ops, \
+}
+
+}}}
+
+서브시스템은 따로 데이터 구조가 있는 것이 아니라 kset의 한 종류이므로
+서브시스템을 초기화하거나 등록하는 함수들도 모두
+kset의 함수들을 호출하기만 한다.
+
+{{{
+
+654 void subsystem_init(struct kset *s)
+655 {
+656     kset_init(s);
+657 }
+658
+659 int subsystem_register(struct kset *s)
+660 {
+661     return kset_register(s);
+662 }
+663
+664 void subsystem_unregister(struct kset *s)
+665 {
+666     kset_unregister(s);
+667 }
+
+}}}
+
+
+
+= sysfs = 
+
+
+== kobject로 디렉토리 만들기 ==
+
+
+kobject에 "hello_sys"라고 이름을 저장하고 kobject_register로 kobject를 등록한다.
+만약 kobject의 kset 필드와 parent 필드를 지정하지 않았으면
+/sys/hello_sys 디렉토리가 생긴다.
+
+
+{{{
+
+
+260   if (kobject_set_name(tmp_kobj, "hello_sys") != 0) {
+261     debug("kobject_set_name error\n");
+262     err--;
+263   }
+264
+265   // no kset&parent setting, parent directory will be /sys/
+266   if (kobject_register(tmp_kobj) != 0) {
+267     debug("kobject_register error\n");
+268     err--;
+269   }
+
+
+}}}
+
+
+== kobj_type로 파일 만들기 ==
+
+
+
+{{{
+
+
+165 int kobject_shadow_add(struct kobject *kobj, struct sysfs_dirent *shadow_parent)
+{
+...
+197   error = create_dir(kobj, shadow_parent);
+...
+}
+
+
+ 47 static int create_dir(struct kobject *kobj, struct sysfs_dirent *shadow_parent)
+ 48 {
+ 49   int error = 0;
+ 50   if (kobject_name(kobj)) {
+ 51     error = sysfs_create_dir(kobj, shadow_parent);  -> kobject 이용한 디렉토리 생성
+ 52     if (!error) {
+ 53       if ((error = populate_dir(kobj))) -> kobj에 있는 kobj_ktype를 이용한 파일 생성
+ 54         sysfs_remove_dir(kobj);
+ 55     }
+ 56   }
+ 57   return error;
+ 58 }
+
+
+723 /**
+ 724  *  sysfs_create_dir - create a directory for an object.
+ 725  *  @kobj:    object we're creating directory for.
+ 726  *  @shadow_parent: parent object.
+ 727  */
+ 728 int sysfs_create_dir(struct kobject *kobj,
+ 729          struct sysfs_dirent *shadow_parent_sd)
+ 730 {
+ 731   struct sysfs_dirent *parent_sd, *sd;
+ 732   int error = 0;
+ 733
+ 734   BUG_ON(!kobj);
+ 735
+
+부모 객체가 있는지 확인한다. 없으면 그냥 sysfs가 마운트된 /sys에 디렉토리를 만든다.
+
+ 736   if (shadow_parent_sd)
+ 737     parent_sd = shadow_parent_sd;
+ 738   else if (kobj->parent)
+ 739     parent_sd = kobj->parent->sd;
+ 740   else if (sysfs_mount && sysfs_mount->mnt_sb)
+ 741     parent_sd = sysfs_mount->mnt_sb->s_root->d_fsdata;
+ 742   else
+ 743     return -EFAULT;
+ 744
+
+create_dir은 /fs/sysfs/dir.c에 있는 파일 시스템 관련 함수이므로 분석 안함
+디렉토리를 만드는 것으로 추정됨
+
+ 745   error = create_dir(kobj, parent_sd, kobject_name(kobj), &sd); 
+ 746   if (!error)
+ 747     kobj->sd = sd;
+ 748   return error;
+ 749 }
+
+
+ 19 /**
+ 20  *  populate_dir - populate directory with attributes.
+ 21  *  @kobj:  object we're working on.
+ 22  *
+ 23  *  Most subsystems have a set of default attributes that
+ 24  *  are associated with an object that registers with them.
+ 25  *  This is a helper called during object registration that
+ 26  *  loops through the default attributes of the subsystem
+ 27  *  and creates attributes files for them in sysfs.
+ 28  *
+ 29  */
+ 30
+ 31 static int populate_dir(struct kobject * kobj)
+ 32 {
+ 33   struct kobj_type * t = get_ktype(kobj);
+ 34   struct attribute * attr;
+ 35   int error = 0;
+ 36   int i;
+ 37
+
+kobj_type에 설정되어 있고, kobj_type 구조체에서 default_attrs 필드가 설정되어 
+있는지 확인한다. 만약 kobj_type 구조체를 만들고 초기화를 하지 않아서
+default_attrs 필드에 쓰레기 값이 들어있으면 default_attrs 필드를 읽으면서
+커널 패닉이 발생한다.
+!! kobj_type 구조체를 만든 후 반드시 초기화 할 것 !!
+
+ 38   if (t && t->default_attrs) {
+
+default_attrs 배열을 읽어서 생성할 파일 이름과 모드등을 읽어서 파일을 만든다.
+
+ 39     for (i = 0; (attr = t->default_attrs[i]) != NULL; i++) {
+ 40       if ((error = sysfs_create_file(kobj,attr)))
+ 41         break;
+ 42     }
+ 43   }
+ 44   return error;
+ 45 }
+
+
+}}}
+
+
+= kobject & sysfs 사용 예제 =
+
+
+== hello.c ==
+
+{{{
+
+
+
+
+// These 3 files must be included always
+// init.h, module.h, sched.h 
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/sched.h>
+
+#include <linux/kernel.h>	// printk
+
+
+// fs.h must be included before cdev.h
+// because structure cdev has inode data defined in fs.h
+#include <linux/fs.h>		// alloc/register_chrdev_region
+#include <linux/cdev.h>	// struct cdev
+
+#include <asm/uaccess.h>	// copy_to/from_user
+#include <linux/proc_fs.h>	// /proc
+#include <linux/ioctl.h>	// ioctl
+
+
+// semaphore
+#include <linux/seq_file.h>
+#include <asm/semaphore.h>	// down/up semaphore
+#include <asm/system.h>
+
+#include <linux/config.h>		// kernel compile configuration
+#include <linux/time.h>			// timespec, timeval and time-related functions
+#include <linux/timer.h>		// kernel timer related stuffs
+#include <linux/types.h>		// timer_t, time_t
+#include <linux/spinlock.h>
+#include <linux/interrupt.h>	// irq-related stuff, tasklet_struct
+
+#include <asm/hardirq.h>			// irq_stat
+
+#include <linux/kobject.h>	// sysfs
+#include <linux/sysfs.h>
+
+#include <linux/device.h> // struct bus_type
+
+
+#define HELLO_DEBUG 1
+
+
+#ifdef HELLO_DEBUG
+#define debug(fmt, args...) printk(KERN_DEBUG "HELLO: " fmt, ## args)
+#else
+#define debug(fmt, args...)
+#endif
+
+
+
+#define MAJOR_NUM 0
+#define MINOR_NUM 0
+#define DEV_NUM 1
+
+#define DEV_NAME "hello"
+
+
+
+MODULE_LICENSE("DUAL BSD/GPL");
+
+
+
+
+
+
+// 二쇰쾲?몄? 遺踰덊샇
+int hello_major = MAJOR_NUM;
+int hello_minor = MINOR_NUM;
+int hello_nr_devs = DEV_NUM;
+
+
+
+// character device structure
+dev_t hello_dev_number;
+
+
+// ?ъ슜?먭? 留뚮뱺 媛앹껜
+// kobject瑜??ы븿?섍퀬 ?덉쓬
+typedef struct __hello_object {
+	struct kobject kobj;
+	struct module *owner;
+} hello_object_t;
+
+
+hello_object_t hello_obj;
+
+
+
+//
+// When user process read sys-attribute file, this is called
+//
+ssize_t hello_sysfs_show(struct kobject *kobj, struct attribute *attr, char *buffer)
+{
+	int ret = 0;
+	hello_object_t *obj = container_of(kobj, hello_object_t, kobj);
+
+	debug("User read sys-file\n");
+	ret = sprintf(buffer, "file name : %s, Owner module : %s\n", attr->name, obj->owner->name);
+	
+	debug("%s return: %s\n", __FUNCTION__, buffer);
+	
+
+	// return data-length user can get
+	return ret;	
+}
+
+
+//
+// When user process write sys-attribute file, this is called
+//
+ssize_t hello_sysfs_store(struct kobject *kobj, struct attribute *attr, const char *buffer, size_t size)
+{
+	int ret = 0;
+	hello_object_t *obj = container_of(kobj, hello_object_t, kobj);
+
+	debug("User write to sys-file\n");
+	debug("file name : %s, Owner module : %s\n", attr->name, obj->owner->name);
+	
+	debug("User write: %s (size=%d)\n", buffer, size);
+	
+	ret = size;
+
+	// return data-length user actually write
+	return ret;
+}
+
+
+//
+// sysfs file operation
+//
+// when user read sysfs, 'show' is invoked
+// user write, 'store' is invoked
+//
+struct sysfs_ops hello_sys_ops = {
+	.show = hello_sysfs_show,
+	.store = hello_sysfs_store
+};
+
+
+
+//
+// invoked by kobject_cleanup 
+// when reference count of kobject reaches to 0
+//
+void hello_ktype_release(struct kobject *kobj)
+{
+	struct kobj_type *type = kobj->ktype;
+	int i;
+
+	if (type == NULL)
+		return;
+
+	for (i=0; type->default_attrs[i] != NULL; i++) {
+		// free name memory
+		if (type->default_attrs[i]->name != NULL)
+			kfree(type->default_attrs[i]->name);
+
+		// free entry of default_attrs array
+		kfree(type->default_attrs[i]);
+	}
+
+	// free array for default_attrs
+	kfree(type->default_attrs);
+
+
+}
+
+
+
+//
+// register char driver
+//
+int register_hello_cdev(void)
+{
+
+	//
+	// register character driver
+	//
+	// register_chrdev_region also create sys-file at /sys/module
+	//
+	
+	if (hello_major == 0) {
+		if (alloc_chrdev_region(&hello_dev_number, hello_minor, hello_nr_devs, DEV_NAME) < 0) {
+			debug("Fail to allocate device number, <%s:%d>\n", __FILE__, __LINE__);
+			return -1;
+		}
+
+	} else {
+		hello_dev_number = MKDEV(hello_major, hello_minor);
+
+		// /sys/module/hello file is created
+		if (register_chrdev_region(hello_dev_number, hello_nr_devs, DEV_NAME) < 0) {
+			debug("Fail to register device number #%d, <%s:%d>\n", hello_major, __FILE__, __LINE__);
+			return -1;
+		}
+	}
+
+	hello_major = MAJOR(hello_dev_number);
+	hello_minor = MINOR(hello_dev_number);
+	debug("major=#%d, minor=#%d\n", hello_major, hello_minor);
+
+	return 0;
+
+}
+
+
+//
+// attribute-files at /sys/hello_sys/*
+//
+int init_hello_attributes(struct kobj_type *tmp_ktype)
+{
+	char *attr_name;
+
+
+	//
+	// kobj_type is an array to atore the pointers of struct attribute
+	//
+	tmp_ktype->default_attrs = kmalloc(3*sizeof(struct attribute *), GFP_KERNEL);
+	if (tmp_ktype->default_attrs == NULL)
+		return -ENOMEM;
+
+	// attribute file operations
+	tmp_ktype->sysfs_ops = &hello_sys_ops;
+	tmp_ktype->release = hello_ktype_release;
+
+
+	//
+	// 1st file setting
+	//
+	tmp_ktype->default_attrs[0] = kmalloc(sizeof(struct attribute), GFP_KERNEL);
+	if (tmp_ktype->default_attrs[0] == NULL)
+		return -ENOMEM;
+
+	attr_name = kmalloc(8, GFP_KERNEL);
+	if (attr_name == NULL)
+		return -ENOMEM;
+
+	strncpy(attr_name, "attr1", 7);
+	tmp_ktype->default_attrs[0]->name = attr_name;
+
+	tmp_ktype->default_attrs[0]->owner = THIS_MODULE;
+
+	// readable for all user, writable for root
+	tmp_ktype->default_attrs[0]->mode = S_IWUSR | S_IRUGO;
+
+
+	//
+	// 2nd file setting
+	//
+	tmp_ktype->default_attrs[1] = kmalloc(sizeof(struct attribute), GFP_KERNEL);
+	if (tmp_ktype->default_attrs[1] == NULL)
+		return -ENOMEM;
+
+	attr_name = kmalloc(8, GFP_KERNEL);
+	if (attr_name == NULL)
+		return -ENOMEM;
+
+	strncpy(attr_name, "attr2", 7);
+	tmp_ktype->default_attrs[1]->name = attr_name;
+
+	tmp_ktype->default_attrs[1]->owner = THIS_MODULE;
+
+	// readable for all user, writable for root
+	tmp_ktype->default_attrs[1]->mode = S_IWUSR | S_IRUGO;
+
+
+	//
+	// last file must be NULL
+	//
+	tmp_ktype->default_attrs[2] = NULL;
+
+	return 0;
+
+}
+
+
+static int hello_init(void)
+{
+	int err=0;
+	struct kobject *tmp_kobj;
+	struct kobj_type *tmp_ktype;
+	
+
+	debug("# Device init # <%s:%d>\n", __FILE__, __LINE__);
+
+	// character device module will appear as /sys/module/hello
+	err = register_hello_cdev();
+	if (err < 0)
+		return err;
+
+	
+	//
+	// kobject processing
+	//
+	
+	// init custom object, hello_obj
+	hello_obj.owner = THIS_MODULE;
+
+	//
+	// /sys/bus/pci/devices/hello_sys will be created!!
+	//
+	hello_obj.kobj.kset = &pci_bus_type.devices;
+
+
+	// init kobj_type
+	tmp_kobj = &hello_obj.kobj;
+	hello_obj.kobj.ktype = (struct kobj_type *)kmalloc(sizeof(struct kobj_type), GFP_KERNEL);
+	tmp_ktype = hello_obj.kobj.ktype;
+
+	debug("%p %p\n", tmp_kobj, tmp_ktype);
+
+	if (tmp_ktype == NULL) {
+		return -ENOMEM;
+	}
+	
+	// Before calling kobject_register, 
+	// kobject->ktype must be initialized!!
+	// Or kernel panic occurs!
+	tmp_ktype->release = NULL;
+	tmp_ktype->sysfs_ops = NULL;
+	tmp_ktype->default_attrs = NULL;
+
+	//
+	// create attribute files
+	//
+	err = init_hello_attributes(tmp_ktype);
+	if (err < 0)
+		return err;
+
+
+	//
+	// register kobject and create sysfs dir as "/sys/hello_sys"
+	//
+
+	// directory name is hello_sys
+	if (kobject_set_name(tmp_kobj, "hello_sys") != 0) {
+		debug("kobject_set_name error\n");
+		err--;
+	}
+
+	// no kset&parent setting, parent directory will be /sys/
+	if (kobject_register(tmp_kobj) != 0) {
+		debug("kobject_register error\n");
+		err--;
+	}
+
+	debug("Now /sys/hello_obj is appeared!\n");
+
+
+	return err;
+}
+
+
+static void hello_exit(void)
+{
+
+
+
+	debug("# Device exit # <%s:%d>\n", __FILE__, __LINE__);
+
+	// remove sys-directory & files
+	kobject_unregister(&hello_obj.kobj); 
+
+	// remove char driver
+	unregister_chrdev_region(MKDEV(hello_major, hello_minor), hello_nr_devs);
+
+}
+
+module_init(hello_init);
+module_exit(hello_exit);
+
+
+
+}}}
+
+
+컴파일 후 드라이버를 로드하고 다음과 같이 실행한다.
+
+{{{
+cat /sys/bus/pci/devices/hello_sys/attr1
+cat /sys/bus/pci/devices/hello_sys/attr2
+
+cat > /sys/bus/pci/devices/hello_sys/attr1
+아무거나 입력
+
+cat > /sys/bus/pci/devices/hello_sys/attr1
+아무거나 입력
+}}}
+
+dmesg | tail을 해보면 내가 출력한 디버깅 메시지가 출력된 것을 볼 수 있다.
+
+
+= 결론 및 요약 =
+
+kobject의 사용법은 다음과 같다.
+
+1. sysfs에 등록할 경우 초기화 (sysfs에 디렉토리를 만들 때)
+ - kobject_set_name 으로 kobject의 이름 저장
+ - kset/parent을 지정하면 /sysfs 가 아닌, 예를 들어 /sys/bus/pci/devices/에 디렉토리 생성됨
+ - kobject_register로 kobject 초기화 & 디렉토리 생성
+
+2. sysfs에 등록 안할 경우 초기화 (sysfs에 디렉토리를 안 만들 때)
+ - kobject_init만 호출
+ 
+3. 사용 방법
+ - kobject에 접근할 때마다 kobject_get을 먼저 호출하고 다 쓴 다음에는 kobject_put을 호출한다.
+
+4. 해지
+ - kobject을 없앨 때에는 kobject_unregister를 호출한다. sysfs의 디렉토리가 없어지고 참조 카운터가 감소하지만 
+이때 kobject가 사라지는 것이 아니다.
+ - kobject_put 함수에서 kobject의 참조 카운터가 0인지 확인해서, kobject_release 함수를 호출하고 여기서 kobject를
+메모리에서 사라지게 만든다.
+ - kobject_unregister를 호출해도 다른 유저 프로세스나 드라이버가 kobject에 레퍼런스를 가지고 있을 수 있으므로
+항상 참조 카운터를 기준으로 kobject를 관리한다.
+
+
+sysfs에 속성 파일을 만들때는 다음과 같다. (kobject_register 호출 이전에 실행해야 함)
+
+1. 만들고자 하는 파일의 수만큼 struct attribute 데이터를 만든다.
+
+2. struct attribute의 포인터 배열을 만들어서 kobject->kobj_type->default_attrs에 할당한다.
+
+3. 배열에 struct attribute의 포인터를 저장한다.
+
+4. 배열의 마지막 엔트리에 NULL을 저장한다.
+
+5. kobject_register (kobject_add)를 호출한다.
+
+
+kset이나 parent를 설정하지 않으면 /sys/my_driver 와 같이 sysfs의 최상위에만 디렉토리에를 만들 수 있다. 만약 그 외에 /sys/bus 같은 다른 디렉토리 밑에 디렉토리를 만들고 싶다면 버스, 클래스 등의 구조체 안에 있는 kset 포인터를 내가 만든 자료구조의 kobject.kset 필드에 저장해주고 kobject를 등록하면 된다.
+이에 대한 자세한 방법은 Linux Device Driver 3rd 를 참고한다.

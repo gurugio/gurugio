@@ -1,0 +1,570 @@
+vim과 cscope를 이용한 소스 검색 환경 만들기
+
+
+
+[[TableOfContents]] 
+
+
+
+많은 사람들이 이미 ctags와 vim을 사용하여 리눅스 커널 소스를 공부하고 개발에도 사용하고 있다. 하지만 scsope만큼 다양한 기능이 없고 단지 특정 함수나 변수의 정의만을 보여준다. cscope를 사용하면 함수나 변수가 사용되는 곳도 찾을 수 있고 텍스트 검색 등을 할 수 있어서 grep, ctags, find 등의 전통적인 검색 툴이 하는 모든 일을 아주 빠르게 할 수 있다.
+
+만약 cscope에 익숙해진다면 개발에 많은 도움을 얻을 수 있을 것이다. cscope을 조금 더  편리하게 사용할 수 있도록 몇가지 방법을 소개한다.
+
+
+= cscope로 검색 데이터베이스 생성 =
+
+
+원하는 소스의 루트 디렉토리에서 다음 스크립트를 실행한다.
+
+{{{
+#!/bin/bash
+
+
+if [[ -e cscope.files ]]
+then
+	rm -f cscope.files
+fi
+
+if [[ -e cscope.out ]]
+then
+	rm -f cscope.out
+fi
+
+
+
+find . \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.h' -o -name '*.s' -o -name '*.S' \) -print > cscope.files
+echo "CSCOPE file list: cscope.files created"
+echo "CSCOPE database buiding: wait..."
+cscope -b -i cscope.files
+
+if [[ -e cscope.out ]]
+then
+	echo "OK"
+else
+	echo "FAIL!!"
+fi
+}}}
+
+find . \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.h' -o -name '*.s' -o -name '*.S' \) -print > cscope.files 명령으로 소스 파일들만을 골라서 파일 리스트를 만드는 명령이다. 이렇게 파일 리스트를 만든 후 cscope -b -i cscope.files 명령으로 데이터베이스 파일 cscope.out 을 생성한다.
+
+
+
+= vimrc 설정 =
+
+
+vimrc에 다음 본문을 추가한다.
+
+{{{
+"========== cscope를 사용 설정 =============
+
+" check cscope for definition of a symbol before checking ctags: set to 1
+" if you want the reverse search order.
+set csto=0
+set cst
+set nocsverb
+
+
+"CTRL+\+[search types]
+"search types
+"s: C 심볼 검색
+"g: 정의 검색
+"d: 커서가 있는 함수 안에서 호출되는 함수들 검색
+"c: 커서가 있는 함수를 호출하는 함수
+"t: 텍스트 문자열 검색
+"e: 확장 정규식을 사용하여 검색
+"f: 파일 이름 검색
+"i: 이 파일을 인클루드하는 파일 검색
+
+
+" To do the first type of search, hit 'CTRL-\', followed by one of the
+" cscope search types above (s,g,c,t,e,f,i,d).  The result of your cscope
+" search will be displayed in the current window.  You can use CTRL-T to
+" go back to where you were before the search.  
+nmap <C-\>s :cs find s <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>g :cs find g <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>d :cs find d <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>c :cs find c <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>t :cs find t <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>e :cs find e <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>f :cs find f <C-R>=expand("<cfile>")<CR><CR>	
+nmap <C-\>i :cs find i ^<C-R>=expand("<cfile>")<CR>$<CR>
+
+
+
+" Using 'CTRL-spacebar' (intepreted as CTRL-@ by vim) then a search type
+" makes the vim window split horizontally, with search result displayed in
+" the new window.
+"
+" (Note: earlier versions of vim may not have the :scs command, but it
+" can be simulated roughly via:
+"    nmap <C-@>s <C-W><C-S> :cs find s <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-@>s :scs find s <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-@>g :scs find g <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-@>c :scs find c <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-@>t :scs find t <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-@>e :scs find e <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-@>f :scs find f <C-R>=expand("<cfile>")<CR><CR>	
+nmap <C-@>i :scs find i ^<C-R>=expand("<cfile>")<CR>$<CR>	
+nmap <C-@>d :scs find d <C-R>=expand("<cword>")<CR><CR>	
+
+
+
+
+" Hitting CTRL-space *twice* before the search type does a vertical 
+" split instead of a horizontal one (vim 6 and up only)
+"
+" (Note: you may wish to put a 'set splitright' in your .vimrc
+" if you prefer the new window on the right instead of the left
+nmap <C-@><C-@>s :vert scs find s <C-R>=expand("<cword>")<CR><CR>
+nmap <C-@><C-@>g :vert scs find g <C-R>=expand("<cword>")<CR><CR>
+nmap <C-@><C-@>c :vert scs find c <C-R>=expand("<cword>")<CR><CR>
+nmap <C-@><C-@>t :vert scs find t <C-R>=expand("<cword>")<CR><CR>
+nmap <C-@><C-@>e :vert scs find e <C-R>=expand("<cword>")<CR><CR>
+nmap <C-@><C-@>f :vert scs find f <C-R>=expand("<cfile>")<CR><CR>	
+nmap <C-@><C-@>i :vert scs find i ^<C-R>=expand("<cfile>")<CR>$<CR>	
+nmap <C-@><C-@>d :vert scs find d <C-R>=expand("<cword>")<CR><CR>
+
+}}}
+
+
+
+= 사용법 =
+
+사용법은 의외로 간단하다. 사용법이 복잡한게 아니라 몇가지 명령을 외워야 하는데 이 명령들을 모니터 밑이나 잘 보이는 곳이 붙여놓고 사용하다보면 익숙해진다.
+
+ * 키워드에 커서를 위치한 후 CTRL + \ + [검색 타입] 입력
+  * s: 심볼 전체 검색, 모든 타입의 검색을 다 함
+  * g: 정의 검색
+  * c: 키워드가 함수일때 이 함수를 호출하는 곳 검색
+  * t: 키워드를 일반 텍스트로 검색
+  * e: egrep의 확장 텍스트 검색 기능과 동일
+  * f: 파일 이름으로 검색
+  * i: 키워드가 헤더 파일일 때 이 헤더 파일을 참조하는 파일들을 검색
+  * d: 키워드가 함수 이름일 때 이 함수에서 호출되는 함수들을 검색
+ * ctags 에서 사용하는 단축 키들이 모두 사용 가능하다. 몇가지만 소개하면
+  * vi -t 키워드: 키워드를 검색하면서 vi 실행
+  * CTRL+]: 정의 검색
+  * CTRL+t: 이전 화면으로 돌아감
+ * 키워드를 직접 입력할 때
+  * :cscope find [검색 타입] [키워드] 
+  * :cs f [검색 타입] [키워드]
+
+
+저자가 주로 사용하는 방법은
+
+ 1. vi -t start_kernel 로 이름을 아는 함수의 정의 열기
+ 1. CTRL+] 소스 읽는 중 정의 찾기 <---> CTRL+t 돌아가기
+ 1. CTRL+\+c 이 함수가 또 언제 호출되나 확인
+ 1. CTRL+\+f 함수나 변수의 타입을 알기 위해 헤더 파일 열어보기
+
+
+= vimrc 예제 =
+
+아래에 현재 저자가 사용하고 있는 .vimrc 파일을 올린다. 전체를 이해할 필요는 없고 cscope 관련 섹션만 이해하면 된다.
+
+
+{{{
+"/usr/share/vim/vim71/vimrc_example.vim 파일 복사한것
+
+" An example for a vimrc file.
+"
+" Maintainer:   Bram Moolenaar <Bram@vim.org>
+" Last change:  2006 Nov 16
+"
+" To use it, copy it to
+"     for Unix and OS/2:  ~/.vimrc
+"             for Amiga:  s:.vimrc
+"  for MS-DOS and Win32:  $VIM\_vimrc
+"           for OpenVMS:  sys$login:.vimrc
+
+" When started as "evim", evim.vim will already have done these settings.
+if v:progname =~? "evim"
+  finish
+endif
+
+" Use Vim settings, rather then Vi settings (much better!).
+" This must be first, because it changes other options as a side effect.
+set nocompatible
+
+" allow backspacing over everything in insert mode
+set backspace=indent,eol,start
+
+if has("vms")
+  set nobackup          " do not keep a backup file, use versions instead
+else
+  set backup            " keep a backup file
+endif
+set history=50          " keep 50 lines of command line history
+set ruler               " show the cursor position all the time
+set showcmd             " display incomplete commands
+set incsearch           " do incremental searching
+
+" For Win32 GUI: remove 't' flag from 'guioptions': no tearoff menu entries
+" let &guioptions = substitute(&guioptions, "t", "", "g")
+
+" Don't use Ex mode, use Q for formatting
+map Q gq
+
+" In many terminal emulators the mouse works just fine, thus enable it.
+"set mouse=a
+
+" Switch syntax highlighting on, when the terminal has colors
+" Also switch on highlighting the last used search pattern.
+if &t_Co > 2 || has("gui_running")
+  syntax on
+  set hlsearch
+endif
+
+" Only do this part when compiled with support for autocommands.
+if has("autocmd")
+
+  " Enable file type detection.
+  " Use the default filetype settings, so that mail gets 'tw' set to 72,
+  " 'cindent' is on in C files, etc.
+  " Also load indent files, to automatically do language-dependent indenting.
+  filetype plugin indent on
+
+  " Put these in an autocmd group, so that we can delete them easily.
+  augroup vimrcEx
+  au!
+
+  " For all text files set 'textwidth' to 78 characters.
+  autocmd FileType text setlocal textwidth=78
+
+  " When editing a file, always jump to the last known cursor position.
+  " Don't do it when the position is invalid or when inside an event handler
+  " (happens when dropping a file on gvim).
+  autocmd BufReadPost *
+    \ if line("'\"") > 0 && line("'\"") <= line("$") |
+    \   exe "normal! g`\"" |
+    \ endif
+
+  augroup END
+
+else
+
+  set autoindent                " always set autoindenting on
+
+endif " has("autocmd")
+
+
+
+
+"============== 기본 환경 설정 =============
+
+set tabstop=4
+set softtabstop=4
+set shiftwidth=4
+set shiftround
+set expandtab
+set number
+color darkspectrum
+
+set bg=dark
+
+" for GVIM font, english & Korean
+set guifont=Bitstream\ Vera\ Sans\ Mono\ 11
+set guifontwide=UnDotum\ 11
+
+
+
+set encoding=utf-8
+set fileencoding=euc-kr
+set fileencodings=euc-kr,utf-8
+
+set cinoptions+=(0,W4
+set fo+=t
+set textwidth=80
+
+" highlight doxygen comment
+let g:load_doxygen_syntax=1
+let g:doxygen_enhanced_color=1
+
+
+" stdc 라이브러리 헤더 파일 위치
+" C-p 를 누르면 자동으로 함수 이름 완성됨
+set path=.,/usr/include ",/home/gurugio/work/linux-2.6.21-s3c6400/include
+
+set ruler  " 화면 오른쪽 아래에 현재 커서의 위치(줄,칸)을 보여줌
+set showmatch
+set ai     " 자동 들여쓰기
+set showmode
+"set wrap  " 자동으로 <CR> 삽입
+set nobackup
+set textwidth=79  " 한 줄이 79글자가 넘어가면 줄넘김
+
+
+" GREP options 는 쉘 환경변수 GREP_OPTIONS 로 세팅
+let Grep_Path = '/bin/grep'
+let Grep_OpenQuickfixWindow = 1
+let Grep_Default_Options = '-rn'
+
+
+
+"========== cscope를 사용하기 전에 미리 설정 사항 =============
+set csto=0
+set cst
+set nocsverb
+
+
+"------------------------------
+" imap: insert mode mapping
+" nmap: noremal mode mapping
+"------------------------------
+
+" previous/next error in compile message window
+nnoremap <silent> <F2> :cp<cr>
+nnoremap <silent> <F3> :cn<cr>
+
+" copy one line and comment
+nmap <F12> <esc>yy P I/* <esc>A */<esc>j
+
+
+" scroll down
+inoremap <C-E> <C-E>
+nnoremap <C-E> <C-E>
+
+if has("gui_running")
+    " save
+    inoremap <C-s> <esc>:w<cr>
+    nnoremap <C-s> :w<cr>
+endif
+
+
+"call grep
+nnoremap <C-g> :Rgrep
+
+
+" Q acts as q
+abbr Q q
+" W acts as w
+abbr W w
+abbr Wq wq
+
+
+
+
+
+"-----------------------------------------
+
+"CTRL+\+[search types]
+"search types
+"s: C 심볼 검색
+"g: 정의 검색
+"d: 커서가 있는 함수 안에서 호출되는 함수들 검색
+"c: 커서가 있는 함수를 호출하는 함수
+"t: 텍스트 문자열 검색
+"e: 확장 정규식을 사용하여 검색
+"f: 파일 이름 검색
+"i: 이 파일을 인클루드하는 파일 검색
+
+
+" To do the first type of search, hit 'CTRL-\', followed by one of the
+" cscope search types above (s,g,c,t,e,f,i,d).  The result of your cscope
+" search will be displayed in the current window.  You can use CTRL-T to
+" go back to where you were before the search.  
+nmap <C-\>s :cs find s <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>g :cs find g <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>d :cs find d <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>c :cs find c <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>t :cs find t <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>e :cs find e <C-R>=expand("<cword>")<CR><CR>	
+nmap <C-\>f :cs find f <C-R>=expand("<cfile>")<CR><CR>	
+nmap <C-\>i :cs find i ^<C-R>=expand("<cfile>")<CR>$<CR>
+
+
+
+" Using 'CTRL-spacebar' (intepreted as CTRL-@ by vim) then a search type
+" makes the vim window split horizontally, with search result displayed in
+" the new window.
+"
+" (Note: earlier versions of vim may not have the :scs command, but it
+" can be simulated roughly via:
+"    nmap <C-@>s <C-W><C-S> :cs find s <C-R>=expand("<cword>")<CR><CR>	
+
+"    gvim does not input ctrl+spacebar
+if has("gui_running")
+    nmap <C-c>s :scs find s <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-c>g :scs find g <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-c>g :scs find g <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-c>c :scs find c <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-c>t :scs find t <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-c>e :scs find e <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-c>f :scs find f <C-R>=expand("<cfile>")<CR><CR>	
+    nmap <C-c>i :scs find i ^<C-R>=expand("<cfile>")<CR>$<CR>	
+    nmap <C-c>d :scs find d <C-R>=expand("<cword>")<CR><CR>	
+else
+    nmap <C-@>s :scs find s <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-@>g :scs find g <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-@>g :scs find g <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-@>c :scs find c <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-@>t :scs find t <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-@>e :scs find e <C-R>=expand("<cword>")<CR><CR>	
+    nmap <C-@>f :scs find f <C-R>=expand("<cfile>")<CR><CR>	
+    nmap <C-@>i :scs find i ^<C-R>=expand("<cfile>")<CR>$<CR>	
+    nmap <C-@>d :scs find d <C-R>=expand("<cword>")<CR><CR>	
+endif
+
+
+
+" Hitting CTRL-space *twice* before the search type does a vertical 
+" split instead of a horizontal one (vim 6 and up only)
+"
+" (Note: you may wish to put a 'set splitright' in your .vimrc
+" if you prefer the new window on the right instead of the left
+if has("gui_running")
+    nmap <C-c><C-c>s :vert scs find s <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-c><C-c>g :vert scs find g <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-c><C-c>c :vert scs find c <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-c><C-c>t :vert scs find t <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-c><C-c>e :vert scs find e <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-c><C-c>f :vert scs find f <C-R>=expand("<cfile>")<CR><CR>	
+    nmap <C-c><C-c>i :vert scs find i ^<C-R>=expand("<cfile>")<CR>$<CR>	
+    nmap <C-c><C-c>d :vert scs find d <C-R>=expand("<cword>")<CR><CR>
+else
+    nmap <C-@><C-@>s :vert scs find s <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-@><C-@>g :vert scs find g <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-@><C-@>c :vert scs find c <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-@><C-@>t :vert scs find t <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-@><C-@>e :vert scs find e <C-R>=expand("<cword>")<CR><CR>
+    nmap <C-@><C-@>f :vert scs find f <C-R>=expand("<cfile>")<CR><CR>	
+    nmap <C-@><C-@>i :vert scs find i ^<C-R>=expand("<cfile>")<CR>$<CR>	
+    nmap <C-@><C-@>d :vert scs find d <C-R>=expand("<cword>")<CR><CR>
+endif
+
+"============ ctags 설정 ========================
+" ctags 태그 위치
+" 커널과 다른 디렉토리에서 작업할 때도 태그 검색 가능
+set tags=./tags,../tags,../../tags,../../../tags,tags
+
+set path=.,/usr/include/,/usr/local/include,./include
+
+"============ taglist plugin 설정 ================
+"Tlist 설정
+let Tlist_WinWidth = 20 " 태그 창 너비
+let Tlist_Process_File_Always = 0
+let Tlist_Enable_Fold_Column = 0
+let Tlist_Display_Tag_Scope = 0
+let Tlist_Sort_Type = "name"
+let Tlist_GainFocus_On_ToggleOpen = 0 " 창 열려도 커서 안옮김
+let Tlist_Use_Right_Window = 1 "오른쪽에 창 열기
+let Tlist_Display_Prototype = 1
+let Tlist_Exit_OnlyWindow = 1
+let Tlist_File_Fold_Auto_Close = 0
+
+
+
+"============== winmanager plugin 설정 ==================
+" 아래 3줄은 winmanager 홈피에서 권장한 설정
+let g:winManagerWidth=30 " How wide should it be( pixels)
+let g:winManagerWindowLayout = 'FileExplorer,TagsExplorer|BufExplorer' " What windows should it
+let g:persistentBehaviour = 0
+" TAB 새창으로 열기
+" c PWD를 현재 디렉토리로 변경
+" C PWD로 이동
+" R rename, D delete
+
+
+
+"=========================== 키 맵핑 ========================
+"======= 기본적으로 대부분의 맵핑은 ,로 시작하게 한다
+"======= 창 이동과 관련된 맵핑은 C-w 로 시작한다.
+"============================================================
+
+
+" 폴딩 접기/펴기
+nmap ,zf v]}zf
+nmap ,zo zo
+
+" IDE 개발 환경 시작
+nmap ,id :WMToggle<cr>
+
+
+"창 높이 조절
+map <c-j> <c-w>+
+map <c-k> <c-w>-
+
+
+"창 너비 조절
+map <c-h> <c-w>>
+map <c-l> <c-w><
+
+
+"go first explorer window
+map <c-w><c-f> :FirstExplorerWindow<cr>
+"go bottom explorer window
+map <c-w><c-b> :BottomExplorerWindow<cr>
+
+
+" ,st 는 가로 창을 나누고 선택된 태그를 연다.
+func! Sts()
+        let st = expand("<cword>")
+        exe "sts ".st
+endfunc
+nmap ,st :call Sts()<cr>
+
+" 세로 창 열고 태그 열기
+func! Vts()
+        let vt = expand("<cword>")
+        exe "vs"
+        exe "ts ".vt
+endfunc
+nmap ,vt :call Vts()<cr>
+
+
+
+" cscope 데이터베이스 파일 읽기
+" 현재 디렉토리에 cscope.out 파일이 있어야 cscope가 실행됨
+if filereadable("./cscope.out")
+        cs add cscope.out
+endif
+set csverb
+
+
+" ,css 명령은 :cs find s <symbol> 과 같은 역할을 함 (심볼 찾기)
+func! Css()
+        let css = expand("<cword>")
+        new
+        exe "cs find s ".css
+        if getline(1) == ""
+                exe "q!"
+        endif
+endfunc
+nmap ,css :call Css()<cr>
+
+
+" 라이브러리의 man 페이지 열기
+func! Man()
+        let sm = expand("<cword>")
+        exe "!man -S 2:3:4:5:6:7:8:9:tcl:n:l:p:o ".sm
+endfunc
+nmap ,ma :call Man()<cr><cr>
+
+
+" make 실행한 후 결과 메시지를 새 창에 열어서 보여주기
+func! Make()
+        exe "make"
+        exe "cw"
+endfunc
+nmap ,mk :w<cr> :call Make()<cr>
+
+
+
+"func! InsertTabWrapper()
+"        let col = col('.') - 1
+"        if !col || getline('.')col-1!~'\k'
+"                return "\<TAB>"
+"        else
+"                if pumvisible()
+"                        return "\<C-P>"
+"                else
+"                        return "\<C-N>\<C-P>"
+"                end
+"        endif
+"endfunction
+
+"inoremap <tab> <c-r>=InsertTabWrapper()<cr>
+"inoremap <expr> <CR> pumvisible() ? "<C-Y><CR>" : "<CR>"
+
+
+}}}

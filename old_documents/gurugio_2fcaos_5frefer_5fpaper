@@ -1,0 +1,806 @@
+= OS 관련 논문 =
+
+http://glukjeoluk.tistory.com/category/%EC%93%B0%EC%9E%98%EB%95%8C%EA%B8%B0%20%EC%97%84%EB%8A%94%EA%B2%83%EB%93%A4/Operating%20System
+
+
+{{{:
+
+Kernel Structures
+
+   1. M. Seltzer, Y. Endo, C. Small and K. Smith, "Dealing with Disaster: Surviving Misbehaved Kernel Extensions," Proceedings of the 1996 Symposium on Operating System Design and Implementation, USENIX Association, October 1996.
+   2. J. K. Ousterhout, A. R. Cherenson, F. Douglis, M. N. Nelson and B. B. Welch, "The Sprite Network Operating System," IEEE Computer, February 1988, pp. 23-36.
+   3. M. F. Kaashoek, D. R. Engler, G. R. Ganger, H. M. Briceño, R. Hunt, D. Mazières, T. Pinckney, R. Grimm, J. Jannotti, and K. MacKenzie, "Application Performance and Flexibility on Exokernel Systems," Proceedings of the Sixteenth Symposium on Operating Systems Principles, ACM, October 1997.
+   4. B. Bershad, S. Savage, P. Pardyak, E. G. Sirer, D. Becker, M. Fiuczynski, C. Chambers and S. Eggers, "Extensibility, Safety and Performance in the SPIN Operating System," Proceedings of the Fifteenth Symposium on Operating System Principles, ACM: Copper Mountain, Colorado, December 1995 pp. 267-284.
+   5. G. Hamilton and P. Kougiouris, "The Spring Nucleus: A Microkernel for Objects," In Proceedings of the 1993 Summer Usenix Conference, June 1993. 
+
+Memory Management
+
+   1. H. M. Levy and P. H. Lipman, "Virtual Memory Management in the VAX/VMS Operating System," IEEE Computer, March 1982, pp. 35-41. (for this paper a high-resolution version of the PDF is also available here).
+   2. O. Babaoglu and W. Joy, "Converting a Swap-Based System to do Paging in an Architecture Lacking Page Reference Bits," In Proceedings of the 8th Symposium on Operating Systems Principles, ACM, 1981, pp. 78-85.
+   3. M. Talluri, M. D. Hill and Y. A. Kalidi, "A New Page Table for 64-bit Address Spaces," Proceedings of the Fifteenth Symposium on Operating Systems Principles, ACM, 1995, pp. 184-199.
+   4. J. B. Carter, J. K. Bennett and W. Zwaenepoel, "Techniques for Reducing Consistency-related Communication in Distributed Shared-memory Systems," ACM Transactions on Computer Systems, Vol. 13, No. 3, August 1995, pp. 205-243.
+   5. R. Rashid, A. Tevanian, M. Young, D. Golub, R. Baron, D. Black, W. Bolsky and J. Chew, "Machine-independent Virtual Memory Management for Paged Uniprocessor and Multi-processor Architectures," IEEE Transactions on Computers, Vol. 37, No. 8 (1988), pp. 896-905.
+   6. Song Jiang, Feng Chen, and Xiaodong Zhang, "CLOCK-Pro: An Effective Improvement of the CLOCK Replacement," Proceedings of the USENIX 2005 Technical Conference, 2005, pp.323-336. 
+
+File Systems
+
+   1. M. K. McKusick, W. N. Joy, S. J. Leffler and R. S. Fabry, "A Fast File System for UNIX," ACM Transactions on Computer Systems, Vol. 2, No. 3, August 1984, pp. 181-197.
+   2. M. N. Nelson, B. B. Welch and J. K. Ousterhout, "Caching in the Sprite Network File System," ACM Transactions on Computer Systems, Vol. 6, No. 1, February 1988, pp. 134-154.
+   3. M. Rosenblum and J. K. Ousterhout, "The Design and Implementation of a Log-Structured File System," ACM Transactions on Computer Systems, Vol. 10, No. 1, February 1992, pp. 26-52.
+   4. M. Seltzer, K. Bostic, M. K. McKusick, C. Staelin, "An Implementation of a Log-Structured File System for UNIX," Proceedings of the 1993 Winter Usenix Conference, 1993.
+   5. L. F. Cabrera and D. D. E. Long. "Swift: Using Distributed Disk Striping to Provide High I/O Data Rates," Computing Systems, vol. 4, no. 4 (1991), pp. 405-436.
+   6. T. M. Kroeger and D. D. E. Long, "Design and Implementation of a Predictive File Prefetching Algorithm," In Proceedings of the 2001 Usenix Winter Technical Conference, Boston: Usenix, January 2001, pp. 319-328.
+   7. Douglas S. Santry , Michael J. Feeley, Norman C. Hutchinson, Alistair C. Veitch, Ross W. Carton, and Jacob Ofir, "Deciding when to forget in the Elephant file system," In Proceedings of the ACM Symposium on Operating Systems Principles (SOSP 99), Dec. 1999, pp. 110-123.
+   8. Dave Hitz, James Lau, Michael Malcolm, "File System Design for an NFS File Server Appliance," Proceedings of the USENIX Winter 1994 Technical Conference.
+   9. "The NFS Distributed File Service", SunSoft, 1995. -->Shorter paper here.
+  10. R. Burns, R. Rees and D. Long, "An Analytical Study of Opportunistic Lease Renewal," In Proceedings of the 16th International Conference on Distributed Computing Systems (ICDCS), IEEE, 2001 (Slides PDF).
+  11. Tsozen Yeh, Darrell Long, and Scott Brandt, "Performing File Prediction with a Program-Based Successor Model," International Symposium on Modeling, Analysis, and Simulation on Computer and Telecommunication Systems (MASCOTS 2001), pp. 193-202, June 2001.
+  12. Tsozen Yeh, Darrell Long, and Scott Brandt, "Caching Files with a Program-based Last N Successors," Workshop on Caching, Coherency and Consistency (WC3 '01), June 2001.
+  13. Tsozen Yeh, Darrell Long, and Scott Brandt, "Increasing Predictive Accuracy through Limited Prefetching," Communication Networks and Distributed Systems Modeling and Simulation Conference (CNDS 2002), pp. 131-138, January 2002.
+  14. S. Ghemawat, H. Gobioff, and S. Leung, "The Google file system," Proceedings of the 19th ACM Symposium on Operating Systems Principles (SOSP '03), Bolton Landing, NY, October 2003.
+  15. Chandramohan A. Thekkath, Timothy Mann, Edward K. Lee, "Frangipani: A Scalable Distributed File System," In Proceedings of the ACM Symposium on Operating Systems Principles (SOSP 97), St. Malo, France, October 1997, pp. 224-237.
+  16. John H. Hartman and John K. Ousterhout, "The Zebra Striped Network File System," ACM Transactions on Computer Systems, Vol. 13, No. 3, August 1995, pp. 274-310. 
+  17. Sean Quinlan and Sean Dorward, "Venti: A New Approach to Archival Data Storage," Conference on File and Storage Technologies (FAST 2002).
+  18. Dave Hitz and Andy Watson, "The Evolution of NFS," Network Appliance, Inc. Technical Report.
+  19.
+
+      Nikolai Joukov, Timothy Wong, and Erez Zadok, "Accurate and Efficient Replaying of File System Traces", Proceedings of the 4th Conference on File and Storage Systems (FAST), pages 337–350 December 2005.
+  20.
+
+      Xuhui Li, Ashraf Aboulnaga, and Kenneth Salem, "Second-Tier Cache Management Using Write Hint", Proceedings of the 4th Conference on File and Storage Systems (FAST), pages 115–128 December 2005. 
+
+Mobility and Power
+
+   1. J. J. Kistler and M. Satyanarayanan, "Disconnected Operation in the Coda File System," ACM Transactions on Computer Systems, Vol. 10, No. 1, February 1992, pp. 3-25.
+   2. G. H. Kuenning and G. J. Popek, "Automated Hoarding for Mobile Computers," In Proceedings of the ACM Symposium on Operating Systems Principles (SOSP 97), St. Malo, France, October 1997.
+   3. David P. Helmbold, Darrell D. E. Long, Tracey L. Sconyers, and Bruce Sherrod. "Adaptive Disk Spin-Down for Mobile Computers," Mobile Networks and Applications (MONET) Journal, ACM/Baltzer, 2000.
+   4. Brian D. Noble, M. Satyanarayanan, Dushyanth Narayanan, James Eric Tilton, Jason Flinn, and Kevin R. Walker, "Agile Application-Aware Adaptation for Mobility-Power," In Proceedings of the ACM Symposium on Operating Systems Principles (SOSP 97), St. Malo, France, October 1997.
+   5. Dirk Grunwald, Philip Levis, Charles B. Morrey III, Michael Neufeld, and Keith I. Farkas, "Policies for Dynamic Clock Scheduling," In Proceedings of the Symposium on Operating Systems Design and Implementation (OSDI 2000), 2000.
+   6. Jeffrey S. Chase, Darrell C. Anderson, Prachi N. Thakar, Amin M. Vahdat, "Managing Energy and Server Resources in Hosting Centers," In Proceedings of the ACM Symposium on Operating Systems Principles (SOSP 2001), Banff, Canada, October 2001. 
+
+Authentication, Protection and Security
+
+   1. B. W. Lampson, "A Note on the Confinement Problem," Communications of the ACM, Vol. 16, No. 10, October 1973, pp. 613-615.
+   2. R. L. Rivest, A. Shamir and L. Adleman, "A Method for Obtaining Digital Signatures and Public-Key Cryptosystems," Communications of the ACM, Vol. 21, No. 2, February 1978, pp. 120-126.
+   3. R. M. Needham and M. D. Schroeder, "Using Encryption for Authentication in Large Networks of Computers," Communications of the ACM, Vol. 21, No. 12, December 1978, pp. 993-999.
+   4. M. Burrows, M. Abadi and R. Needham, "A Logic of Authentication-Protection-Security/required," ACM Transactions on Computer Systems, Vol. 8, No. 1, February 1990, pp. 18-36.
+   5. David Mazieres, Michael Kaminsky, M. Frans Kaashoek, and Emmett Witchel, "Separating key management from file system security," Proceedings of the Seventeenth Symposium on Operating Systems Principles, ACM, 1999.
+   6. Umesh Maheshwari, Radek Vingralek, and Bill Shapiro, "How to Build a Trusted Database System on Untrusted Storage," In Proceedings of the Symposium on Operating Systems Design and Implementation (OSDI 2000), 2000.
+   7. John D. Strunk, Garth R. Goodson, Michael L. Scheinholtz, Craig A.N. Soules, and Gregory R. Ganger, "Self-Securing Storage: Protecting Data in Compromised Systems," In Proceedings of the Symposium on Operating Systems Design and Implementation (OSDI 2000), 2000.
+   8. J. G. Steiner, C. Neuman and J. I. Schiller, "Kerberos: An Authentication Service for Open Network Systems," Proceedings of the Winter 1988 USENIX Conference, 1988, pp. 205-211.
+   9. A. S. Tanenbaum, R. van Renesse, H. van Staveren, G. J. Sharp, S. J. Mullender, J. Jansen and G. van Rossum, "Experiences with the Amoeba Distributed Operating System," Communications of the ACM, Vol. 33, No. 12, 1990, pp. 46-63.
+  10. Edward Wobber, Michael Burrows, Martin Abadi and Butler Lampson, "Authentication in the Taos Operating System," ACM Transactions on Computer Systems, Vol. 12, No. 1, February 1994, pp. 3-32. 
+
+Scheduling and Synchronization
+
+   1. C. A. R. Hoare, "Monitors: An Operating System Structuring Concept," Communications of the ACM, Vol. 17, No. 10, October 1974, pp. 549-557.
+   2. R. Golding, P. Bosch, C. Staelin, T. Sullivan and J. Wilkes, "Idleness is not Sloth," Proceedings of the 1995 Winter Usenix Conference, January 1995, pp. 201-212.
+   3. Christopher R. Lumb, Jiri Schindler, and Gregory R. Ganger, "Freeblock Scheduling Outside of Disk Firmware," Conference on File and Storage Technologies (FAST) January 28-30, 2002. Monterey, CA.
+   4. James Philbin, Jan Edler, Otto J. Anshus, Craig C. Douglas and Kai Li, "Thread Scheduling for Cache Locality," Proceedings of ASPLOS-VII, 1996, pp. 60-71. 
+
+Interprocess Communication
+
+   1. C. A. R. Hoare, "Communicating Sequential Processes," Communications of the ACM, Vol. 21, No. 8, August 1978, pp. 666-677.
+   2. A. D. Birrell and B. J. Nelson, "Implementing Remote Procedure Calls," ACM Transactions on Computer Systems, Vol. 2, No. 1, February 1984, pp. 39-59.
+   3. D. Mosberger and L. Peterson, "Making Paths Explicit in the Scout Operating System," Proceedings of the 1996 Symposium on Operating System Design and Implementation, October 1996, pp. 153-168.
+   4. B. Bershad, T. Anderson, E. Lazowska and H. Levy, "Lightweight Remote Procedure Call," ACM Transactions on Computer Systems, Vol. 8, No. 1, February 1990, pp. 37-55.
+   5. B. N. Bershad, T. E. Anderson, E. D. Lazowska and H. M. Levy, "User-level Interprocess Communication for Shared Memory Multiprocessors," ACM Transactions on Computer Systems, Vol. 9, No. 2, May 1991, pp. 175-198. 
+
+Distributed Systems
+
+   1. J. F. Shoch and J. A. Hupp, "The 'Worm' Programs - Early Experience with a Distributed Computation," Communications of the ACM, Vol. 25, No. 3, March 1982, pp. 172-180.
+   2. L. Lamport, "Time, Clocks, and the Ordering of Events in a Distributed System," Communications of the ACM, Vol. 21, No. 7, July 1978, pp. 558-565.
+   3. M. D. Schroeder, A. D. Birrell and R. M. Needham, "Experience with Grapevine: the Growth of a Distributed System," ACM Transactions on Computer Systems, Vol. 2, No. 1, February 1984, pp. 3-23.
+   4. D. R. Cheriton and D. Skeen, "Understanding the Limitations of Causally and Totally Ordered Communication," In Proceedings of the 14th Symposium on Operating Systems Principles, ACM, December 1993, pp. 44-57.
+   5. L. E. Moser, P. M. Melliar-Smith, D. A. Agarwal, R. K. Budhia, and C. A. Lingley-Papadopoulos, "Totem: A Fault-Tolerant Multicast Group Communication System," Communications of the ACM, April 1996.
+   6. R. van Renesse, K. P. Birman and S. Maffeis, "Horus: A Flexible Group Communication System," Communications of the ACM, Vol. 39, No. 4, April 1996, pp. 76-83.
+   7. Ken Birman's response to Cheriton and Skeen's 1993 SOSP paper (PDF).
+   8. Y. Amir, L. E. Moser, P. M. Melliar-Smith, D. A. Agarwal, and P. Ciarfella, "The Totem Single-Ring Ordering and Membership Protocol," ACM Transactions on Computer Systems 13, 4 (November 1995), 311-342.
+   9. L. Lamport, R. Shostak, M. Pease, "The Byzantine Generals Problem," ACM Transactions on Programming Languages and Systems (TOPLAS) Vol. 4, No. 3, July 1982.
+  10. Leslie Lamport, P. M. Melliar-Smith, "Byzantine Clock Synchronization," Proceedings of the third annual ACM Symposium on Principles of Distributed Computing (PODC) 1984. 
+
+Fault Tolerance
+
+   1. Walter A. Burkhard, and Jai Menon, "Disk Array Storage System Reliability," Proceedings of the Symposium on Fault-Tolerant Computing, 1993.
+   2. D. Long, A. Muir, and R. Golding. "A Longitudinal Study of Internet Host Reliability," Proceedings of the Fourteenth Symposium on Reliable Distributed Systems, Bad Neuenahr, Germany: IEEE, September 1995, pp. 2-9.
+   3. D. D. E. Long and J. F. Pâris, "Voting with Regenerable Volatile Witnesses," Proceedings of the Seventh International Conference on Data Engineering, IEEE, April 1991, pp. 112-119 .
+   4. B. Liskov, S. Ghemawat, R. Gruber, P. Johnson, L. Shrira and M. Williams, "Replication in the Harp File System," Proceedings of the Thirteenth Symposium on Operating Systems Principles, ACM, October 1991, pp. 198-212 .
+   5. John R. Douceur and Roger P. Wattenhofer "Optimizing File Availability in a Secure Serverless Distributed File System," Proceedings of the 20th Symposium on Reliable Distributed Systems, 2001, pp. 4-13.
+   6. David A. Patterson, Peter Chen, Garth Gibson, and Randy H. Katz, "Introduction to Redundant Arrays of Inexpensive Disks (RAID)," Proceedings of the 34th IEEE Computer Society International Conference (COMPCON'89), 1989, pp. 112-117.
+   7. Martin Schulze, Garth Gibson, and David A. Patterson, "How Reliable is a RAID," Proceedings of the 34th IEEE Computer Society International Conference (COMPCON'89), 1989, pp. 118-123. 
+
+Performance Evaluation
+
+   1. J. Bentley, "The Back of the Envelope," Communications of the ACM, Vol. 27, No. 3, March 1984, pp. 180-184.
+   2. J. Bentley, "The Envelope is Back," Communications of the ACM, Vol. 29, No. 3, March 1986 pp. 176-181.
+   3. P. Heidelberger and S. Lavenberg, "Computer Performance Evaluation Methodology," IEEE Transactions on Computers, Vol. C-33, No. 12, December 1984, pp. 1195-1220.
+   4. M. G. Baker, J. H. Hartman, M. D. Kupfer, K. W. Shirriff and J. K. Ousterhout "Measurements of a Distributed File System," In Proceedings of the 13th Symposium on Operating Systems Principles, ACM, October 1991, pp. 198-212.
+   5. Timothy J. Gibson, Ethan L. Miller, and Darrell D. E. Long, "Long-term File Activity and Inter-Reference Patterns" CMG98 Proceedings, 24th International Conference on Technology Management and Performance Evaluation of Enterprise-Wide Information Systems, Computer Measurement Group, Anaheim, CA, December 1998, pp. 976-987.
+   6. Timothy J. Gibson and Ethan L. Miller, "An Improved Long-Term File-Usage Prediction Algorithm," CMG99 Proceedings, 25th International Conference on Technology Management and Performance Evaluation of Enterprise-Wide Information Systems, Computer Measurement Group, Reno, NV, December 1999, pp. 639-648. 
+
+Experience
+
+   1. C. A. R. Hoare, "The Emperor's Old Clothes," Communications of the ACM, Vol. 24, No. 2, February 1981, pp. 75-83.
+   2. B. W. Lampson, "Hints for Computer System Designers," IEEE Software, January 1984, pp. 11-28.
+   3. J. H. Saltzer, D. P. Reed and D. D. Clark, "End-to-End Arguments in System Design," ACM Transactions on Computer Systems, Vol. 2, No. 4, November 1984, pp. 277-288.
+   4. Investigate the background and circumstances surrounding the C. A. R. Hoare article "The Emperor's Old Clothes." 
+
+Web Proxy
+
+   1. Jun Wang, Rui Min, Yingwu Zhu, and Yiming Hu, "UCFS - A Novel User-Space, High Performance, Customized File System for Web Proxy," IEEE Transactions on Computers, Vol. 51, No. 9, Sept 2002, pp. 1056-1073. 
+
+Miscellanea
+
+   1. R. A. Day, "How to Write a Scientific Paper," IEEE Transactions on Professional Communication, Vol. 20, No. 1, June 1977, pp. 32-37.
+   2. R. Levin and D. D. Redell, "An Evaluation of the Ninth SOSP Submissions," Operating Systems Review, Vol. 17, No. 3, July 1983, pp. 35-40 (HTML). 
+
+
+
+
+
+
+}}}
+
+
+
+
+
+
+
+{{{:
+1   Filesystems and Transactions
+Main readings:
+
+    * Hennessy and Patterson. Computer Architecture: A Quantitative Approach. Pages 485--493 (section on disk storage).
+    * M. K. McKusick, W. N. Joy, S. J. Leffler, and R. S. Fabry. A Fast File System for UNIX. ACM Transactions on Computer Systems, Vol. 2, No. 3, August 1984, pp. 181--197. (Summary)
+    * M. Rosenblum and J. K. Ousterhout. The Design and Implementation of a Log-Structured File System. ACM Transactions on Computer Systems, Vol. 10, No. 1, February 1992, pp. 26--52. (Summary)
+    * S. R. Kleiman. Vnodes: An Architecture for Multiple File System Types in Sun UNIX. In Proceedings of the 1986 Usenix Conference, June 1986, pp. 238--247.
+    * D. K. Gifford, P. Jouvelot, M. A. Sheldon, and J. W. O'Toole, Jr. Semantic File Systems. In Proceedings of the 13th ACM Symposium on Operating System Principles, October 1991.
+    * P. A. Bernstein, V. Hadzilacos, and N. Goodman. Concurrency Control and Recovery in Database Systems. Pages 25--56 (serializability and 2PL).
+    * N. S. Barghouti and G. E. Kaiser. Sections 5 and 6 from Concurrency Control in Advanced Database Applications. ACM Computing Surveys, 23(9), 269--317, 1991. 
+
+Supplemental readings:
+
+    * K. Thompson. Unix Implementation. Bell System Technical Journal, 56(6), 1978.
+    * L. McVoy and S. Kleiman. Extent-like Performance from a Unix File System. In Proceedings of the 1991 Winter Usenix Conference, January 1991, pp. 33--44. (Summary)
+    * M. Seltzer, K. Bostic, M. K. McKusick, and Carl Staelin. An Implementation of A Log-Based File System for Unix. In Proceedings of the 1993 Winter Usenix Conference, January 1993.
+    * J. N. Mattews, D. Roselli, A. M. Costello, R. Y. Wang, and T. E. Anderson. Improving the Performance of Log-Structured File Systems with Adaptive Methods. In Proceedings of the 16th ACM Symposium on Operating System Principles, October 1997.
+    * R. Y. Wang, T. E. Anderson, and D. A. Patterson. Virtual Log Based File Systems for a Programmable Disk. In Proceedings of the 3rd Symposium on Operating Systems Design and Implementation, February 1999.
+    * D. S. H. Rosenthal. Evolving the Vnode Interface. Proceedings of the Summer USENIX Conference, pages 107--117, June 1990.
+    * J. S. Heidemann and G. J. Popek. File System Development with Stackable Layers. ACM Transaction on Computer Systems, 12(1): 58--89, Febuary 1994.
+    * B. Welch. A Comparison of Three Distributed File System Architectures: Vnode, Sprite, and Plan 9. Computing Systems, 7(2):175--99, Spring 1994.
+    * G. Weikum and G. Vossen. Transactional Information Systems. Academic Press, 2002. Chapter 3 (pages 61--123). 
+
+Additional Resources:
+
+    * Ext2fs home page (including full sources -- only 6K lines! -- and design papers)
+    * ReiserFS home page
+    * XFS home page
+    * FiST home page
+    * D. S. H. Rosenthal. Evolving the Vnode Interface. Proceedings of the Summer USENIX Conference, pages 107--117, June 1990.
+    * Burra Gopal, Integrating Content-Based Access Mechanisms with Hierarchical File Systems. OSDI'99.
+    * Rob Pike, Dave Presotto, Ken Thompson, Howard Trickey, Phil Winterbottom. The Use of Name Spaces in Plan 9. Operating Systems Review (reprinted from Proceedings of the 5th ACM SIGOPS European Workshop), 1992.
+    * Epsilon serializability 
+
+2   Pessimismistic Replication
+Main readings:
+
+    * S. B. Davidson and H. Garcia-Molina and D. Skeen. Consistency in Partitioned Networks, ACM Computing Surveys, 17(3), 1985.
+    * M. Satyanarayanan, ``Distributed File Systems.'' In Distributed Systems, Sape Mullender, ed. Addison Wesley, 1993.
+    * Russel Sandberg, David Goldberg, Steve Kleiman, Dan Walsh and Bob Lyon, "Design and Implementation of the Sun Network Filesystem," in Proc. Summer 1985 USENIX Conf., pp. 119-130.
+    * B. Liskov, S. Ghemawat, R. Gruber, P. Johnson, L. Shrira and M. Williams, "Replication in the Harp File System," Proceedings of the Thirteenth Symposium on Operating Systems Principles, ACM, October 1991, pp. 198-212.
+    * M. N. Nelson, B. B. Welch and J. K. Ousterhout, Caching in the Sprite Network File System, ACM Transactions on Computer Systems, Vol. 6, No. 1, February 1988, pp. 134-154. 
+
+Supplemental readings:
+
+    * M. Satyanarayanan, A Survey of Distributed File Systems. Technical Report, Department of Computer Science, Carnegie-Mellon University, Number CMU-CS-89-116, February 1989. Also appeared in Annu. Rev. Comput. Sci., volume 4, 1990, pages 73--104. 
+
+Additional resources:
+
+    * A. Muthitacharoen, B. Chen, David Mazières, "A Low-Bandwidth Network File System", Proceedings of the 18th ACM Symposium on Operating Systems Principles (SOSP'01), October 21-24, 2001. (Summary) 
+
+3   Optimistic Replication Schemes
+Main readings:
+
+    * J. J. Kistler and M. Satyanarayanan, Disconnected Operation in the Coda File System, ACM Transactions on Computer Systems, Vol. 10, No. 1, February 1992, pp. 3-25.
+    * Bruce Walker, Gerald Popek, Robert English, Charles Kline, Greg Thiel, The LOCUS Distributed Operating System, 9th Symposium on Operating Systems Principles (SOSP), Bretton Woods, New Hampshire, November 1983, pp. 49-70.
+    * Alan J. Demers, Daniel H. Greene, Carl Hauser, Wes Irish, John Larson. Epidemic algorithms for replicated database maintenance. Proceedings of the Sixth Annual ACM Symposium on Principles of distributed computing (PODC). August 10 - 12, 1987, Vancouver Canada. Pages 1-12.
+    * Fischer, Michael J., and Michael, Alan. Sacrificing serializability to attain high availability of data in an unreliable network. Proceedings of the ACM Symposium on Principles of Database Systems, March 29-31, 1982, Los Angeles, California, pp. 70-75.
+    * R. G. Guy, G. J. Popek, and T. W. Page, Jr., Consistency Algorithms for Optimistic Replication. Proceedings of the First International Conference on Network Protocols. IEEE, October 1993.
+    * Maurice Herlihy, Apologizing vs. asking permission: optimistic concurrency control for abstract data types. TODS 15(1), 96--124, 1990. 
+
+Supplemental readings:
+
+    * E. T. Mueller, J. D. Moure, and G. J. Popek, A Nested Transaction Mechanism for LOCUS, 9th Symposium on Operating Systems Principles (SOSP), Bretton Woods, New Hampshire, November 1983, pp. 71-89.
+    * R. G. Guy, J. S. Heidemann, W.-K. Mak, T. W. Page Jr., G. J. Popek, D. Rothmeier, Implementation of the Ficus Replicated File System, USENIX Summer 1990, 63-72.
+    * T. W. Page Jr., R. G. Guy, J. S. Heidemann, D. Ratner, P. L. Reiher, A. Goel, G. H. Kuenning, G. J. Popek, Perspectives on Optimistically Replicated, Peer-to-Peer Filing. Software - Practice and Experience 28(2): 155-180 (1998). 
+
+Additional Resources:
+
+    * A nice Overview of epidemic architectures and related ideas 
+
+4   Authentication, privacy, and resource control
+Main readings:
+
+    * Mariposa: A Wide-Area Distributed Database System, Michael Stonebraker, Paul M. Aoki, Avi Pfeffer, Adam Sah, Jeff Sidell, Carl Staelin, and Andrew Yu. VLDB Journal 5, 1 (Jan. 1996), p. 48-63.
+    * I. Clarke, O. Sandberg, B. Wiley, and T.W. Hong, Freenet: A Distributed Anonymous Information Storage and Retrieval System, in Workshop on Design Issues in Anonymity and Unobservability, Berkeley, California. Springer: New York (2001). (See also the FreeNet homepage.)
+    * J. Ioannidis, S. Ioannidis, A. Keromytis, V. Prevelakis, ``Fileteller: Paying and getting paid for file storage. (Summary)
+    * S. Miltchev, V. Prevelakis, S. Ioannidis, J. Smith, A. Keromytis, ``Secure and Flexible Global File Sharing. 
+
+Supplemental readings:
+
+    * Mark Miller and Eric Drexler, Markets and computation: Agoric open systems. (Sections 1-3 are enough to get a general picture.) 
+
+5   Synchronization Technologies
+Main readings:
+
+    * Sundar Balasubramaniam and Benjamin C. Pierce, What is a file synchronizer. Fourth Annual ACM/IEEE International Conference on Mobile Computing and Networking (MobiCom '98).
+    * W. Keith Edwards, Elizabeth D. Mynatt, Karin Petersen, Mike J. Spreitzer, Douglas B. Terry, and Marvin Theimer. Designing and Implementing Asynchronous Collaborative Applications with Bayou. ACM Symposium on User Interface Software and Technology, 1997.
+    * Anne-Marie Kermarrec, Anthony Rowstron, Marc Shapiro, and Peter Druschel. The IceCube approach to the reconciliation of divergent replicas, PODC, 2001. (Summary)
+    * Jonathan P. Munson and Prasun Dewan. A flexible object merging framework. Proceedings of the conference on Computer supported cooperative work, Chapel Hill, North Carolina, 1994. 
+
+Supplemental readings:
+
+    * Norman Ramsey and Elod Csirmaz, An Algebraic Approach to File Synchronization. Foundations of Software Engineering, 175--185, September 2001.
+    * Trevor Jim, Benjamin Pierce, and Jerome Vouillon, How to Build a File Synchronizer.
+    * Douglas B. Terry, Marvin Theimer, Karin Petersen, Alan J. Demers, Mike Spreitzer, and Carl Hauser. Managing Update Conflicts in Bayou, a Weakly Connected Replicated Storage System. SOSP 1995, pp. 172-183. (Summary) D. B. Terry, A. J. Demers, K. Petersen, M. J. Spreitzer, M. M. Theimer, and B. B. Welch. Session Guarantees for Weakly Consistent Replicated Data. Proceedings International Conference on Parallel and Distributed Information Systems (PDIS), Austin, Texas, September 1994, pages 140-149.
+    * Shirish H. Phatak and B.R. Badrinath, Conflict Resolution and Reconciliation in Disconnected Databases, Proc. of Mobility in Databases and Distributed Systems (MDDS), Florence, Italy, Sep.'99.
+    * Peter Reiher, John Heidemann, David Ratner, Greg Skinner, and Gerald Popek. Resolving File Conflicts in the Ficus File System. Usenix summer conference, 1994.
+    * Puneet Kumar and M. Satyanarayanan. Flexible and Safe Resolution of File Conflicts. Usenix winter conference, 1995. 
+
+Additional Resources:
+
+    * The Bayou project home page 
+
+6   Algorithmic Underpinnings
+Main readings:
+
+    * Eugene W. Meyers. An o(nd) difference algorithm and its variations. Algorithmica, 1(2):251 266, 1986.
+    * Tancred Lindholm. A 3-way Merging Algorithm for Synchronizing Ordered Trees: The 3DM merging and differencing tool for XML. Masters thesis, Helsinki University of Technology, 2001. (Summary) 
+
+Supplemental readings:
+
+    * Hunt, J.W., and McIlroy, M.D. An Algorithm for Differential File Comparison, Bell Laboratories, N.J., Computing Science Technical Report No.41, 1975.
+    * Miller, W., and Myers, E.W. A file comparison program. Software-Practice and Experience 15, 11 (1985), 1025-1040.
+    * D. S. Hirschberg. Algorithms for the longest common subsequence problem. Journal of the ACM, 24:664-675, 1977.
+    * Neuwirth, C. M., Chandhok, R., Kaufer, D. S., Erion, P., Morris, J., and Miller, D. (1992). Flexible diff-ing in a collaborative writing system. In Proceedings of the Fourth Conference on Computer-Supported Cooperative Work (CSCW '92) (pp. 147-154). Baltimore, MD: Association for Computing Machinery. Reprinted in R. Rada (Ed.) (1996). Groupware and authoring (pp. 189-204).
+    * Sudarshan S. Chawathe, Comparing Hierarchical Data in External Memory. VLDB, 1999. (Summary)
+    * Yuan Wang, David J. DeWitt, and Jin-Yi Cai. X-Diff: A Fast Change Detection Algorithm for XML Documents. (Summary) 
+
+Additional Resources:
+
+    * The source code for diff3 is part of the GNU diffutils package.
+    * The 3DM site. 
+
+}}}
+
+
+
+
+
+{{{:
+
+Phase I: The Invention of Multiprogramming
+
+    * Historical Perspective:
+
+          o E. W. Dijkstra. "The Structure of 'THE' Multiprogramming System," Communications of the ACM, Vol. 11, No. 5, May 1968.
+          o Roberst C. Daley, and Jack Dennis, "Virtual Memory, Processes, and Sharing in MULTIX," Communications of the ACM, Vol. 11, No. 5, May 1968.
+          o Dennis M. Ritchie and Ken Thompson "The UNIX Timesharing System," Communications of the ACM, Vol. 17, No. 7, July 1974. 
+
+Phase II: Grand Visions for Distributed Computing
+
+    * Remote Procedure Calls:
+
+          o A.D. Birrel and B.J. Nelson, ``Implementing Remote Procedure Calls,'' ACM Transactions on Computer Systems, Vol 2, No. 1, February 1984.
+          o Brian N. Bershad, Thomas E. Anderson, Edward D. Lazowska, and Henry M. Levy Lightweight Remote Procedure Calls ACM Transactions on Computer Systems, Vol 8, No. 1, February 1990. 
+    * Group Communication:
+
+          o Kenneth Birman, Andre Schiper, Pat Stephenson ``Lightweight Causal and Atmoic Group Multicast,'' ACM Transactions on Computer Systems, Vol. 9, No. 3, August 1991, pp. 272-314.
+          o David R. Cheriton, Dale Skeen, ``Understanding the Limitations of Causally and Totally Ordered Communication,'' Symposium on Operating System Principles, Ashville, North Carolina, December, 1993, pp. 44-57.
+          o Ken Birman ``A Response to Cheriton and Skeen's Criticism of Causal and Totally Ordered Communication,'' Technical Report 98-3-1390, Cornell University, 1993.
+          o Tarek Abdelzaher, Anees Shaikh, Farnam Jahanian, and Kang Shin, ``RTCast: Lightweight Multicast for Real-Time Process Groups,'' IEEE Real-Time Technology and Applications Symposium, Boston, MA, June 10-12, 1996. 
+    * Transaction Based Systems:
+
+          o Barbara Liskov, ``Distributed Programming in Argus,'' Communications of the ACM, Vol. 31, No. 3, March 1988, pp. 300-312.
+          o Frank Schmuck, and Jim Wyllie, ``Experiences with trasnactions in Quicksilver'', ACM Operating Systems Review, Vol. 25, No. 5, 1991, pp. 239-253. 
+    * Distributed File Systems:
+
+          o E. Levy and A. Silberschatz, ``Distributed File Systems: Concepts and Examples,'' ACM Computing Surveys, Vol. 22, No. 4, December 1990, pp. 321-374.
+          o Sanjay Ghemawat, Howard Gobioff, Shun-Tak Leung, ``The Google File System,'' 19th ACM Symposium on Operating Systems Principles, New York, October 2003. 
+    * Distributed Shared Memory:
+
+          o Kai Li, and Paul Hudak, ``Memory Coherence in Shared Virtual Memory Systems,'' ACM Transactions on Computer Systems, Vol. 7, No. 4, November 1989, pp. 321-359.
+          o J.B. Carter, J.K. Bennet, and W. Zwaenepoel, ``Implementation and Performance of Munin,'' ACM Symposium on Operating Systems Principles, October 1991, pp. 152-164. 
+    * Object-Based Distributed Systems:
+
+          o Roger S. Chin and Samuel T. Chanson, ``Distributed Object-Based Programming Systems,'' ACM Computing Surveys, Vol 23, No. 1, March 1991.
+          o E. Jul, H. Levy, N. Hutchinson, and A. Black, ``Fine-Grained Mobility in the Emerald System,'' ACM Transactions on Computer Systems, Vol. 6, No. 1, February 1988, pp. 109-133. 
+
+Phase III: The Internet Era (Support for WWW, Multimedia, etc)
+
+    * Communication Subsystem Design for QoS Guarantees:
+
+          o R. Gopalakrishnan and Ruru Parulkar, ``Efficient User-Space Protocol Implementations with QoS Guarantees using Real-Time Upcalls,'' IEEE/ACM Transactions on Networking, Vol 6, No 4, August 1998.
+          o Tarek Abdelzaher and Kang Shin, ``End-host Architecture for QoS-Adaptive Communication,'' IEEE Real-Time Technology and Applications Symposium, Denver, Colorado, June 1998.
+          o A. Mehra, A. Shaikh, T. Abdelzaher, Z. Wang, and K. Shin, ``Realizing Services for Guaranteed-QoS Communication on a Microkernel Operating System,'' IEEE Real-Time Systems Symposium, May 1999. 
+    * CPU Scheduling and Multimedia:
+
+          o Clifford W. Mercer, Stefan Savage, and Hideyuki Tokuda ``Processor Capacity Reserves: Operating System Support for Multimedia Applications,'' IEEE International Conference on Multimedia Computing and Systems, May 1994
+          o Micheal Jones, Daniela Rosu, and Marcel Rosu, ``CPU Reservations and Time Constraints: Efficient, Predictable Scheduling of Independent Activities,'' 16th ACM Symposium on Operating Systems Principles, 1997.
+          o Jason Nieh and Monica Lam, ``The Design, Implementation and Evaluation of Smart: A Scheduler for Multimedia Applications,'' 16th ACM Symposium on Operating Systems Principles, 1997.
+          o Pawan Goyal, Xingang Guo, and Harrick M. Vin, A Hierarchical CPU Scheduler for Multimedia Operating Systems,'' Operating Systems Design and Implementation, Seattle, WA, Oct. 1996.
+          o David C. Steere, Ashvin Goel, Joshua Gruenberg, Dylan McNamee, Calton Pu, Jonathan Walpole, ``A Feedback-driven Proportion Allocator for Real-Rate Scheduling,'' Operating Systems Design and Implementation, 1999.
+          o Scott Brandt, Gary Nutt, Toby Brek, and James Mankovich, ``A Dynamic Quality of Service Middleware Agent for Mediating Application Resource Usage,'' IEEE Real-Time Systems Symposium (RTSS '98), pp. 307-317, December 1998. 
+    * Server Performance Issues:
+
+          o Peter Druschel and Gaurav Banga, ``Lazy Receiver Processing (LRP): A Network Subsystem Architecture for Server Systems,'' in OSDI 96.
+          o Gaurav Banga, Peter Druschel, and Jeffrey C. Mogul, ``Resource Containers: A New Facility for Resource Management in Server Systems,'' in OSDI 99.
+          o Vivek S. Pai, Peter Druschel, and Willy Zwaenepoel, ``IO-Lite: A Unified I/O Buffering and Caching System,'' in Third Operating Systems Design and Implementation Symposium, pp. 15-28, February 1999.
+          o Mohit Aron and Peter Druschel, ``Soft Timers: Efficient Microsecond Software Timer Support for Network Processing,'' in SOSP 99. 
+    * Ubiquitous, Mobile and Power-Aware Computing:
+
+          o Brian Schmidt, Monica Lam, and Duane Northcult, ``The Interactive Performance of SLIM: A Stateless, Thin-Client Architecture,'' 17th ACM Symposium on Operating Systems Principles, 1999.
+          o Brian Noble, M. Satyanarayanan, Dushyanth Narayanan, James Tilton, Jason Flinn, Kevin Walker, ``Agile Application-Aware Adaptation for Mobility,'' 16th ACM Symposium on Operating Systems Principles, 1997.
+          o Jason Flinn and M. Satyanarayanan, ``Energy-Aware Adaptation for Mobile Applications,'' 17th ACM Symposium on Operating Systems Principles, 1999.
+          o Padmanabhan Pillai, Kang G. Shin, ``Real-Time Dynamic Voltage Scaling for Low-Power Embedded Operating Systems,'' 18th ACM Symposium on Operating Systems Principles, 2001. 
+    * Peer-to-Peer Computing and Storage Management:
+
+          o Antony Rowstron, Peter Druschel, ``Storage Management and Caching in PAST, A Large-scale, Persistent Peer-to-peer Storage,'' 18th ACM Symposium on Operating Systems Principles, 2001.
+          o Landon P. Cox, Brian D. Noble, ``Samsara: Honor Among Thieves in Peer-to-Peer Storage,'' 19th ACM Symposium on Operating Systems Principles, New York, October 2003.
+          o Krishna P. Gummadi, Richard J. Dunn, Stefan Saroiu, Steven D. Gribble, Henry M. Levy, John Zahorjan, ``Measurement, Modeling, and Analysis of a Peer-to-Peer File-Sharing Workload,'' 19th ACM Symposium on Operating Systems Principles, New York, October 2003. 
+
+}}}
+
+
+
+{{{:
+
+Reading
+
+The reading list is divided into seven parts. The papers in bold are suitable selections for assignment one. The first section lists papers that we are unlikely to discuss in detail in class. These readings provide essential background in research techniques and skills. The second section contains papers that might be appropriate for use in assignment 1. The remaining lists are numbered to cross-reference with the syllabus. The online syllabus has links to all the papers.
+BACKGROUND
+
+The following papers are considered background material. Most of them are quick, easy reads and will provide countless bits of wisdom on systems design, doing research, writing papers, and giving presentations. Some are papers you may have discussed in CS161; if you haven't read these, you definitely should as some discussions will assume the knowledge. For the rest, I urge you to read them sooner rather than later.
+
+The papers are listed alphabetically by first author and title.
+
+    * Abshire: Techniques and Suggestions for Presenters (pdf)
+    * Bentley: The Back of the Envelope (pdf)
+    * Bentley: The Envelope is Back (pdf)
+    * Brooks: No Silver Bullet -- Essence and Accidents of Software Engineering (html)
+    * Day: How to Write a Scientific Paper (pdf)
+    * Ferrari: Considerations on the Insularity of Performance Evaluation (pdf)
+    * Hoare: The Emperor's Old Clothes (pdf)
+    * Lauer: Observations on the Development of an Operating System (pdf)
+    * Levin: An Evaluation of the Ninth SOSP Submission (pdf)
+    * Saltzer: The Instrumentation of MULTICS (pdf)
+    * Saltzer: End-To-End Arguments in System Design (pdf)
+    * Shoch: The "Worm" Programs - Early Experience with Distributed Computation (pdf)
+    * Small: Does Systems Research Measure Up? (pdf)
+    * Smith: The Task of the Referee (pdf)
+    * Lampson: Hints for System Design (pdf)
+    * Roscoe: Writing reviews for systems conferences (pdf) 
+
+Papers we will not cover in class, but which may be appropriate for the first assignment
+
+    * Brown: Operating System Benchmarking in the Wake of Lmbench: A Case Study of the Performance of NetBSD on the Intel Architecture (pdf)
+    * Comer: Probing TCP Implementations (pdf)
+    * McVoy: lmbench: Portable Tools for Performance Analysis (pdf)
+    * D. Patterson: A Case for Redundant Arrays of Inexpensive Disks (RAID) (pdf) 
+
+HISTORY (HI)
+
+   1. Corbató: An Experimental Time-Sharing System (pdf)
+   2. Dijkstra: The Structure of the "THE" Multiprogramming System (pdf)
+   3. Daley: Virtual Memory, Processes, and Sharing in MULTICS (pdf)
+   4. Ritchie: The UNIX Time-Sharing System (pdf)
+   5. Rashid: From RIG to Accent to Mach: The Evolution of a Network Operating System (pdf)
+   6. Leidtke: On micro-kernel Construction (pdf)
+   7. Kaashoek: Application Performance and Flexibility on Exokernel Systems (pdf)
+   8. Bershad: Extensibility, Safety, and Performance in the SPIN Operating System (pdf) 
+
+Virtual Machine Monitors/Virtualization (VMM)
+
+   1. The Origin of the VM/370 Time-Sharing System (pdf) -- Note the change in paper
+   2. Bugnion: Disco: running commodity operating systems on scalable multiprocessors (pdf)
+   3. Rosenblum: The Reincarnation of Virtual Machines (html)
+   4. Waldspurger: Memory Resource Management in VMware ESX Server (pdf)
+   5. Dragovic: Xen and the Art of Virtualization (pdf)
+   6. Nelson: Fast Transparent Migration for Virtual Machines (pdf)
+   7. Xu: ReTrace: Collecting Execution Trace with Virtual Machine Deterministic Replay (pdf)
+   8. Garfinkel: Terra: A Virtual Machine-based platform for trusted computing (pdf)
+   9. Hand: Are Virtual Machine Monitors Microkernels Done Right? (pdf)
+  10. Heiser: Are Virtual-Machine Monitors Microkernels Done Right? (pdf)
+  11. Roscoe: Hype and Virtue (pdf) 
+
+STORAGE SYSTEMS (SS)
+
+   1. McKusick: A Fast File System for UNIX (pdf)
+   2. Hagmann: Reimplementing the Cedar File System Using Logging and Group Commit (pdf)
+   3. Ousterhout: A Trace-Driven Analysis of the UNIX 4.2BSD File System (pdf)
+   4. Rosenblum: The Design and Implementation of a Log-Structured File System (pdf)
+   5. Baker: Measurements of a Distributed File System (pdf)
+   6. Pike: Plan 9 from Bell Labs (pdf)
+   7. Muiswamy-Reddy: PASS: A Provenance-Aware Storage System (pdf)
+   8. Sandberg: Design and Implementation of the Sun Network Filesystem (pdf)
+   9. Howard: Scale and Performance in a Distributed File System (pdf)
+  10. Anderson: Serverless Network File Systems (pdf)
+  11. Ghemawat: The Google File System (pdf) 
+
+DISTRIBUTED SYSTEMS (DS)
+
+   1. Birrell: Implementing Remote Procedure Calls (pdf)
+   2. Schroeder: Experience with Grapevine: The Growth of a Distributed System (pdf)
+   3. Li: IVY: A Shared Virtual Memory System for Parallel Computing (pdf)
+   4. Keleher: TreadMarks: Distributed Shared Memory on Standard Workstations and Operating Systems (pdf)
+   5. Stoica: Chord: A Scalable Peer-to-peer Lookup Service for Internet Applications (pdf)
+   6. Oppenheimer: Design and Implementation Tradeoffs for Wide-Area Resource Discovery (pdf)
+   7. Burrows: The Chubby lock service for loosely-coupled distributed systems (pdf)
+   8. Dynamo: Amazon's Highly Available Key-Value Store (not yet available) 
+
+Miscellaneous
+
+   1. Rinard: Enhancing Server Availability and Security Through Failure-Oblivious Computing (pdf)
+   2. Qin: Rx: Treating Bugs as Software Allergies -- A Safe way to Survive Software Failures (pdf)
+   3. Lampson: Hints for System Design (pdf) 
+
+}}}
+
+
+{{{:
+
+1. 기본 논문
+
+[1] The Science of Scientific Writing
+
+    * George D. Gopen, Judith A. Swan
+    * American Scientist, Volume 78
+    * http://www.mang.canterbury.ac.nz/courseinfo/AcademicWriting/Scientific.htm
+    * [PDF] 
+
+[2] How to Organize your Thesis
+
+    * John W. Chinneck
+    * http://www.sce.carleton.ca/faculty/chinneck/thesis.html
+    * [PDF] 
+
+[3] The Task of the Referee
+
+    * Alan Jay Smith
+    * IEEE Computer, Volume 23, Issue 4 (April 1990), Pages: 65 - 71, 1990
+    * [PDF] 
+
+[4] The Emperor's Old Clothes
+
+    * Charles Antony Richard Hoare
+    * Communications of the ACM, Volume 24, Issue 2 (February 1981), Pages: 75 - 83, 1981
+    * [PDF] 
+
+[5] An Evaluation of the Ninth SOSP Submissions - How (and How Not) to Write a Good Systems Paper
+
+    * Roy Levin, David D. Redell
+    * ACM's Operating System Review, Vol.17, Number 3, July 1983, pp.35-40
+    * [PDF] 
+
+[6] Techniques and Suggestions for Presenters
+
+    * Gary M. Abshire, Kenneth L. White
+    * IEEE Transactions on Prefessional Communications, Vol.21, No.3, September 1978, pp.97-100.
+    * [ZIP] 
+
+2. 시스템 설계
+
+[1] The UNIX Time-Sharing System
+
+    * Dennis M. Ritchie, Ken Thompson
+    * Communications of the ACM, Volume 17, Issue 7 (July 1974), Pages: 365 - 375, 1974
+    * [PDF] 
+
+[2] Virtual Memory, Processes, and Sharing in MULTICS
+
+    * Robert C. Daley, Jack B. Dennis
+    * Communications of the ACM, Volume 11, Issue 5 (May 1968), Pages: 306 - 312, 1968
+    * [PDF] 
+
+[3] On μ-Kernel Construction
+
+    * Jochen Liedtke
+    * 15th ACM Symposium on Operating System Principles (SOSP), December 3-6, Copper Mountain Resort, Colorado
+    * [PDF] 
+
+[4] Application Performance and Flexibility on Exokernel Systems
+
+    * M.F.Kaashoek, D.R.Engler, G.R.Ganger, H.M.Briceno, R.Hunt, D.Mazieres, T.Pinckney, R.Grimm, J.Jannotti, K.Mackenzie
+    * Proceedings of the 16th Symposium on Operating Systems Principles (SOSP), October 1997
+    * [PDF] 
+
+[5] Making information flow explicit in HiStar
+
+    * Nickolai Zeldovich, Silas Boyd-Wickizer, Eddie Kohler, and David Mazières
+    * Proceedings of the 7th Symposium on Operating Systems Design and Implementation, Seattle, WA, November 2006
+    * [PDF] 
+
+3. 스레드 관리
+
+[6] An Introduction to Programming with Threads
+
+    * Andrew D. Birrell
+    * SRC Research Report 35
+    * [PDF] 
+
+[7] Experience with processes and monitors in Mesa
+
+    * Butler W. Lampson and David D. Redell
+    * Communications of the ACM, Volume 23, Issue 2, Feb. 1980
+    * [PDF] 
+
+[8] Using Continuations to Implement Thread Management and Communication in Operating Systems
+
+    * Richard P. Draves, Brian N. Bershad, Richard F. Rashid, and Randall W. Dean
+    * Proceedings of the 13th ACM Symposium on Operating Systems Principles, 1991, Pacific Grove, California, United States
+    * [PDF] 
+
+[9] Capriccio: Scalable Threads for Internet Services
+
+    * Rob von Behren, Jeremy Condit, Feng Zhou, George C. Necula, Eric Brewer
+    * Proceedings of the 19th ACM Symposium on Operating Systems Principles, 2003, Bolton Landing, NY, USA
+    * [PDF] 
+
+[10] Eliminating receive livelock in an interrupt-driven kernel
+
+    * Jeffrey Mogul and K. K. Ramakrishnan
+    * Proceedings of the USENIX 1996 Annual Technical Conference, San Diego, California, Jan. 1996
+    * [PDF] 
+
+[11] The end-to-end argument in system design
+
+    * J. Saltzer, D. Reed, D. Clark
+    * ACM Transactions in Computer Systems 2, 4, November, 1984, pages 277-288
+    * [PDF] 
+
+4. 메모리 관리
+
+[12] Machine-Independent Virtual Memory Management for Paged Uniprocessor and Multiprocessor Architectures
+
+    * R. Rashid, A.Tevanian, M. Young, D. Golub, R. Baron, D. Black, W. Bolosky, and J. Chew
+    * P Proc. of the 2nd International Conference on Architectural Support for Programming Languages and Operating Systems, October 1987
+    * [PDF] 
+
+[13] Virtual Memory Management in the VAX/VMS Operating System
+
+    * Levy and Lipman
+    * IEEE Computer, March 1982
+    * [PDF] 
+
+[14] Virtual Memory Primitives for User Programs
+
+    * Appel and Li
+    * Computer Architecture News, Apr. 1991, pp. 96-107
+    * [PDF] 
+
+[15] Practical, Transparent, Operating System Support for Superpages
+
+    * Juan Navarro, Sitaram Iyer, Peter Druschel and Alan Cox
+    * 5th Symposium on Operating Systems Design and Implementation (OSDI 2002)
+    * [PDF] 
+
+5. 가상 기계
+
+[16] Virtual Machine Monitors: Current Technology and Future Trends
+
+    * Mendel Rosenblum and Tal Garfinkel
+    * IEEE Computer Magazine, May 2005
+    * [PDF] 
+
+[17] Barham: Xen and the Art of Virturalization
+
+    * Paul Barham, Boris Dragovic, Keir Fraser, Steven Hand, Tim Harris, Alex Ho, Rolf Neugebauer, Ian Pratt & Andrew Warfield
+    * 19th ACM SOSP'03, October 19.22, 2003, Bolton Landing, New York, USA
+    * [PDF] 
+
+[18] A Comparison of Software and Hardware Techniques for x86 Virtualization
+
+    * Keith Adams and Ole Ageson
+    * Proceedings of the Twelfth International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS XII), October 2006, San Jose, CA
+    * [PDF] 
+
+[19] Memory Resource Management in VMware ESX Server
+
+    * Carl A. Waldspurger
+    * Proceedings of the 5th Symposium on Operating Systems Design and Implementation (OSDI'02), Dec. 2002. Received best paper award
+    * [PDF] 
+
+6. 입출력
+
+[20] Disco: Running Commodity Operating Systems on Scalable Multiprocessors
+
+    * E. Bugnion, S. Devine and Mendel Rosenblum
+    * Proceedings of the 16th Symposium on Operating Systems Principles (SOSP), October 1997
+    * [PDF] 
+
+[21] Sugerman: Virtualizing I/O Devices on VMWare Workstation's Hosted Virtual Machine Monitor
+
+    * Jeremy Sugerman, Ganesh Venkitachalam and Beng-Hong Lim
+    * Proceedings of the 2001 USENIX Annual Technical Conference Boston, Massachusetts, USA, June 25.30, 2001
+    * [PDF] 
+
+7. 파일 시스템
+
+[22] A Fast File System for UNIX
+
+    * Marshall K. McKusick, William N. Joy, Samuel J. Leffler, and Robert S. Fabry
+    * ACM Transactions on Computer Systems 2(3), August 1984
+    * [PDF] 
+
+[23] The Design and Implementation of a Log-Structured File System
+
+    * Mendel Rosenblum, John K. Ousterhout
+    * ACM Transactions on Computer Systems, Volume 10, Issue 1 (February 1992), Pages: 26 - 52, 1992
+    * [PDF] 
+
+[24] Design and Implementation of the SUN Network Filesystem
+
+    * Sandberget al.
+    * Proceedings of the USENIX 1985 Summer Conference (Portland, Ore , Jun. 1985) pp. 119-130
+    * [PDF] 
+
+[25] Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache Consistency
+
+    * Cary G. Gray and David R. Cheriton
+    * Proceedings of the 12th ACM Symposium Operating Systems Principles, pp. 202-210, 1989
+    * [PDF] 
+
+[26] Disconnected Operation in the Coda File System
+
+    * James J. Kistler and M. Satyanarayanan
+    * ACM Transactions on Computer Systems (TOCS), volume 10, issue 1, February 1992
+    * [PDF] 
+
+[27] Scale and Performance in a Distributed File System
+
+    * John H. Howard, Michael L. Kazar, Sherri G. Menees, David A. Nichols, M. Satyanarayanan, Robert N. Sidebotham, Michael J. West
+    * ACM Transactions on Computer Systems, 6(1):51--81, February 1988
+    * [PDF] 
+
+[28] The Google File System
+
+    * Sanjay Ghemawat, Howard Gobioff, Shun-Tak Leung
+    * 19th ACM Symposium on Operating Systems Principles, October 19-22, 2003
+    * [PDF] 
+
+[29] Journaling versus Soft Updates: Asynchronous Meta-data Protection in File Systems
+
+    * Margo I. Seltzer, Gregory R. Ganger, M. Kirk McKusick, Keith A. Smith, Craig A. N. Soules, Christopher A. Stein
+    * Proceedings of the 2000 USENIX Annual Technical Conference, June 2000
+    * [PDF] 
+
+[30] Bigtable: A Distributed Storage System for Structured Data
+
+    * Fay Chang, Jeffrey Dean, Sanjay Ghemawat, Wilson C. Hsieh, Deborah A. Wallach, Mike Burrows, Tushar Chandra, Andrew Fikes, and Robert E. Gruber
+    * Proceedings of OSDI 2006, November 2006
+    * [PDF] 
+
+[31] Integrating Portable and Distributed Storage
+
+    * Niraj Tolia, Jan Harkes, Michael Kozuch, M. Satyanarayanan
+    * Proceedings of the 3rd USENIX Conference on File and Storage Technologies (FAST '04). San Francisco, CA. March 31, 2004.
+    * [PDF] 
+
+[32] A Low-Bandwidth Network File System
+
+    * Athicha Muthitacharoen, Benjie Chen, and David Mazi`eres
+    * Proceedings of the eighteenth ACM symposium on Operating systems principles, 2001
+    * [PDF] 
+
+[33] MapReduce: Simplified Data Processing on Large Clusters
+
+    * Jeffrey Dean and Sanjay Ghemawat
+    * Proceedings of the Sixth Symposium on Operating System Design and Implementation (OSDI '04), San Francisco, CA, December, 2004
+    * [PDF] 
+
+8. 분산 시스템
+
+[34] Measurement, Modeling, and Analysis of a Peer-to-Peer File-Sharing Workload
+
+    * Krishna Gummadi, Richard Dunn, Stefan Saroiu, Steven Gribble, Henry Levy, and John Zahorjan
+    * Proceedings of the 19th ACM Symp. on Operating Systems Principles, October 2003
+    * [PDF] 
+
+[35] Lessons from Giant-Scale Services
+
+    * Eric A. Brewer
+    * IEEE Internet Computing, July 2001
+    * [PDF] 
+
+[36] Wide Area Cooperative Storage with CFS
+
+    * F. Dabek, M. F. Kaashoek, D. Karger, R. Morris, I. Stoica
+    * Proc. of the 18th ACM. Symp. on Operating Systems Principles, Oct. 2001
+    * [PDF] 
+
+9. 보안
+
+[37] Improving the Reliability of Commodity Operating Systems
+
+    * Michael M. Swift, Brian N. Bershad, and Henry M. Levy
+    * Proceedings of the nineteenth ACM symposium on Operating systems principles, 2003
+    * [PDF] 
+
+[38] A Dynamic Technique for Eliminating Buffer Overflow Vulnerabilities (and Other Memory Errors)
+
+    * Martin Rinard, Cristian Cadar, Daniel Dumitran, Daniel M. Roy, and Tudor Leu
+    * 20th Annual Computer Security Applications Conference (ACSAC), December 2004
+    * [PDF] 
+
+[39] Model-Carrying Code: A Practical Approach for Safe Execution of Untrusted Applications
+
+    * R. Sekar, V.N. Venkatakrishnan, Samik Basu, Sandeep Bhatkar, Daniel C. DuVarney
+    * 19th ACM Symposium on Operating Systems Principles, October 19-22, 2003
+    * [PDF] 
+
+[40] Detecting Past and Present Intrusions through Vulnerability Specific Predicates
+
+    * Ashlesha Joshi, Samuel T. King, George W. Dunlap, and Peter M. Chen
+    * Proceedings of SOSP 2005
+    * [PDF] 
+
+10. 센서 OS
+
+[41] Dynamic Software Reconfiguration in Sensor Networks
+
+    * Sachin Kogekar, Sandeep Neema, Xenofon Koutsoukos
+    * ICW '05: Proceedings of the 2005 Systems Communications
+    * [PDF] 
+
+[42] Remote Incremental Linking for Energy-Efficient Reprogramming of Sensor Networks
+
+    * J. Koshy and R. Pandey
+    * In Proceedings of the European Workshop on Sensor Networks (EWSN) 2005
+    * [PDF] 
+
+[43] DAViM: a Dynamically Adaptable Virtual Machine for Sensor Networks
+
+    * Sam Michiels, Wouter Horre, Wouter Joosen and Pierre Verbaeten
+    * MidSens '06: Proceedings of the international workshop on Middleware for sensor networks
+    * [PDF] 
+
+[44] Mate: A Tiny Virtual Machine for Sensor Networks
+
+    * Philip Levis, David Culler
+    * International Conference on Architectural Support for Programming Languages and Operating Systems
+    * [PDF] 
+
+11. 기타
+
+[45] Exploring Failure Transparency and the Limits of Generic Recovery
+
+    * David E. Lowell, Subhachandra Chandra, and Peter M. Chen
+    * Proceedings of OSDI 2000
+    * [PDF] 
+
+[46] The Anatomy of a Large-Scale Hypertextual Web Search Engine
+
+    * Sergey Brin, Lawrence Page
+    * Computer Networks and ISDN Systems, 30(1-7):107-117,1998
+    * [PDF] 
+
+[47] Hints for Computer System Design
+
+    * Butler W. Lampson
+    * ACM Operating Systems Review, Vol. 15, No. 5, October 1983
+    * [PDF] 
+
+[48] Multics Segments, Sharing and Dynamic Linking
+
+    * Eric A. Brewer
+    * Lecture Notes for Advanced Topics in Computer Systems
+    * [PDF] 
+
+
+}}}
+
+
+
+
+

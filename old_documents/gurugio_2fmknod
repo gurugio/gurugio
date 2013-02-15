@@ -1,0 +1,254 @@
+= mknod 시스템 콜 분석 (2.6.22 커널 기준) =
+
+
+
+mknod 프로그램의 코드를 보고 싶다면 busybox 패키지를 다운받아서  coreutils/mknod.c 파일을 참고한다. mknod.c 파일을 열어보면 명령행 옵션과 파일 이름을 읽은 후 다음과 같이 mknod 시스템 콜을 호출한다.
+
+
+{{{
+ 49                 if (mknod(name, mode, dev) == 0) {
+ 50                     return EXIT_SUCCESS;
+ 51                 }
+}}}
+
+이때 name은 파일이름, mode는 장치 파일의 타입, dev는 장치 번호이다.
+
+mknod라는 시스템 콜에 대한 코드를 확인하려면 리눅스 커널 소스를 읽어보면 된다.
+리눅스 커널의 /include/asm/unistd.h 파일에는 시스템 콜의 번호가 정의되어 있다. mknod 시스템 콜은 다음과 같이 14번으로 정의되어있다.
+
+{{{
+ 21 #define __NR_time        13
+ 22 #define __NR_mknod       14
+ 23 #define __NR_chmod       15
+}}}
+
+
+시스템 콜 핸들러는 arch/i386/kernel/syscall_table.S 에 정의되어 있다. 파일을 열어보면 다음과 같이 sys_mknod가 14번 시스템 콜을 핸들러임을 알 수 있다.
+
+{{{
+ 15     .long sys_time
+ 16     .long sys_mknod
+ 17     .long sys_chmod     /* 15 */
+}}}
+
+
+커널 소스에서 sys_mknod는 fs/namei.c 파일에 정의되어 있다. sys_mknod는 sys_mknodat 함수를 호출한다.
+sys_mknodat은 sys_mknod와 역할은 동일하면서 장치 파일을 생성할 디렉토리를 따로 지정해줄 수 있는 시스템콜인데 AT_FDCWD를 전달하면 mknod가 실행된 디렉토리에 장치 파일을 생성한다.
+
+{{{
+1965 asmlinkage long sys_mknod(const char __user *filename, int mode, unsigned dev)
+1966 {
+1967     return sys_mknodat(AT_FDCWD, filename, mode, dev);
+1968 }
+}}}
+
+
+sys_mknodat 함수에서는 다음과 같이 생성되는 파일의 타입에 따라 다르게 처리한다. 문자 장치 파일의 타입은 S_IFCHR, 블록 장치 파일의 타임은 S_IFBLK 이므로 vfs_mknod 함수가 호출됨을 알 수 있다.
+
+
+{{{
+1937         switch (mode & S_IFMT) {
+1938         case 0: case S_IFREG:
+1939             error = vfs_create(nd.dentry->d_inode,dentry,mode,&nd);
+1940             break;
+1941         case S_IFCHR: case S_IFBLK:
+1942             error = vfs_mknod(nd.dentry->d_inode, dentry, nd.mnt,
+1943                       mode, new_decode_dev(dev));
+1944             break;
+1945         case S_IFIFO: case S_IFSOCK:
+1946             error = vfs_mknod(nd.dentry->d_inode, dentry, nd.mnt,
+1947                       mode, 0);
+1948             break;
+1949         case S_IFDIR:
+1950             error = -EPERM;
+1951             break;
+1952         default:
+1953             error = -EINVAL;
+}}}
+
+sys_mknodat 함수에서 nd는 장치 파일이 생성될 디렉토리의 struct nameidata 이다. nameidata 구조체는 디렉토리의 inode뿐 아니라 어떤 파일 시스템에 속하는지, 루트 디렉토리 등의 정보를 가지고 있다.
+
+(파일시스템에 대한 내용은 아직 공부하지 못했으므로 자세한 설명은 생략한다.)
+
+결론적으로는 sys_mknod 함수는 장치 파일이 생성될 디렉토리의 정보를 얻어내고 vfs_mknod 함수로 전달하는 역할을 한다.
+
+vfs_mknod 함수는 다음과 같이 장치 파일이 생성될 디렉토리의 파일시스템 고유의 mknod 오퍼레이션 함수를 호출한다. 즉 시스템 콜이 호출된 후 지금까지는 가상 파일 시스템의 함수들이 호출되었지만 vfs_mknod 함수가 최종적으로 실제 파일시스템이 가진 mknod 함수를 호출하는 것이다.
+
+{{{
+1908     error = dir->i_op->mknod(dir, dentry, mode, dev);
+}}}
+
+지금 실험하는 서버에는 ext3 파일시스템을 사용하므로 ext3_mknod 함수를 찾아보면 된다. fs/ext3/namei.c 파일에 정의되어 있다. 
+
+핵심 코드는 다음과 같다.
+
+{{{
+754     inode = ext3_new_inode (handle, dir, mode);
+1755     err = PTR_ERR(inode);
+1756     if (!IS_ERR(inode)) {
+1757         init_special_inode(inode, inode->i_mode, rdev);
+...
+1761         err = ext3_add_nondir(handle, dentry, inode);
+1762     }
+}}}
+
+ext3_new_inode 함수는 새로 만들 파일을 위한 inode를 만든다. 그리고 init_special_inode 함수를 호출한다.
+
+{{{
+1402 void init_special_inode(struct inode *inode, umode_t mode, dev_t rdev)
+1403 {
+1404     inode->i_mode = mode;
+1405     if (S_ISCHR(mode)) {
+1406         inode->i_fop = &def_chr_fops;
+1407         inode->i_rdev = rdev;
+1408     } else if (S_ISBLK(mode)) {
+1409         inode->i_fop = &def_blk_fops;
+1410         inode->i_rdev = rdev;
+1411     } else if (S_ISFIFO(mode))
+1412         inode->i_fop = &def_fifo_fops;
+1413     else if (S_ISSOCK(mode))
+1414         inode->i_fop = &bad_sock_fops;
+1415     else
+1416         printk(KERN_DEBUG "init_special_inode: bogus i_mode (%o)\n",
+1417                mode);
+1418 }
+}}}
+
+init_special_inode 함수는 생성할 장치 파일의 타입에 맞게 inode를 초기화한다. 가장 먼저 장치 파일의 타입을 inode의 i_mode 필드에 저장한다. 이것으로 특정 파일이 장치 파일인지 일반 파일인지 등을 알 수 있게 된다.
+
+inode 구조체의 i_fop 는 파일이 접근될 때 호출될 함수들의 포인터를 저장하는데 문자 장치인 경우 def_chr_fops 구조체의 포인터를 저장한다. 마지막으로 장치 번호를 inode의 i_rdev 필드에 저장된다.
+
+
+ext3_add_nondir 함수는 새로 생성된 inode를 ext3 파일시스템에 등록한다. 이때 최종적으로 파일이 생성되는 것이다.
+
+
+= def_chr_fops 의 역할 =
+
+def_chr_fops 구조체에는 chrdev_open 이라는 디폴트 처리 함수가 저장되어 있다.  모든 문자 장치 파일이 처음 열릴 때마다 chrdev_open 함수가 호출된다.
+
+chrdev_open 함수는 모든 장치 파일이 처음 열릴 때 한번만 호출된다. chrdev_open 함수가 하는 일은 문자 장치 드라이버들의 리스트에서 해당되는 드라이버의 파일 연산을 찾아서 def_chr_fops 로 저장되있는 file 구조체의 f_op 포인터에 드라이버의 파일 연산을 저장한다.
+
+ * 장치 파일이 처음 만들어져서 init_special_inode 가 호출된 후
+  * struct inode->i_fop = def_chr_fops
+ * 드라이버 등록시
+  * struct inode->icdev->ops = 드라이버 파일 연산
+ * 장치 파일이 열리고 chrdev_open 이 호출된 후
+  * struct inode->i_fop = def_chr_fops
+  * struct file->f_op = inode->i_cdev->ops (= 드라이버 파일 연산)
+ * read/write/ioctl 등 시스템 콜 호출시
+  * struct file->f_op->read/write/ioctl 호출됨
+
+
+즉 모든 문자 장치 파일들의 inode 파일 연산은 def_chr_fops 이지만 최초로 장치 파일이 열릴때 chrdev_open 함수에 의해서 드라이버 개발자가 등록한 드라이버 함수들이 file->f_op에 지정된다. 그리고 read,write,ioctl 등의 시스템 콜이 호출될 때는 file 구조체의 f_op 항목에 저장된 함수 포인터들이 호출된다.
+
+''현재는 inode 오퍼레이션과 file 오퍼레이션의 차이를 명확하게 알지 못하고 있다.''
+
+{{{
+358 /*
+359  * Called every time a character special file is opened
+360  */
+361 int chrdev_open(struct inode * inode, struct file * filp)
+362 {
+
+...
+368     p = inode->i_cdev;
+...
+파일 연산 저장해줌
+392     filp->f_op = fops_get(p->ops);
+...
+파일 연산에서 open 함수 호출
+397     if (filp->f_op->open) {
+398         lock_kernel();
+399         ret = filp->f_op->open(inode,filp);
+400         unlock_kernel();
+401     }
+...
+404     return ret;
+405 }
+}}}
+
+
+
+
+= 파일 오퍼레이션 =
+
+ext3 파일시스템에서는 디렉토리와 파일의 파일 오퍼레이션이 다르다.
+
+디렉토리를 생성하는 ext3_mkdir 함수를 보면 다음과 같이 ext3_dir_inode_operations 을 파일 오퍼레이션으로 저장하고 여기에는 mknod 등 파일보다 더 많은 오퍼레이션이 있다.
+
+(물론 inode 관련 오퍼레이션과 파일 오퍼레이션은 다른 것이지만 아직 파일시스템을 분석해보지 않아서 차이점을 정확하게 모르고 있으므로 일단 지금은 파일 오퍼레이션이라고 이해하고 있다.)
+
+{{{
+1769 static int ext3_mkdir(struct inode * dir, struct dentry * dentry, int mode)
+1770 {
+1771     handle_t *handle;
+1772     struct inode * inode;
+1773     struct buffer_head * dir_block;
+1774     struct ext3_dir_entry_2 * de;
+1775     int err, retries = 0;
+1776
+1777     if (dir->i_nlink >= EXT3_LINK_MAX)
+1778         return -EMLINK;
+1779
+1780 retry:
+1781     handle = ext3_journal_start(dir, EXT3_DATA_TRANS_BLOCKS(dir->i_sb) +
+1782                     EXT3_INDEX_EXTRA_TRANS_BLOCKS + 3 +
+1783                     2*EXT3_QUOTA_INIT_BLOCKS(dir->i_sb));
+1784     if (IS_ERR(handle))
+1785         return PTR_ERR(handle);
+1786
+1787     if (IS_DIRSYNC(dir))
+1788         handle->h_sync = 1;
+1789
+1790     inode = ext3_new_inode (handle, dir, S_IFDIR | mode);
+1791     err = PTR_ERR(inode);
+1792     if (IS_ERR(inode))
+1793         goto out_stop;
+1794
+1795     inode->i_op = &ext3_dir_inode_operations;
+1796     inode->i_fop = &ext3_dir_operations;
+...
+
+
+2425 /*
+2426  * directories can handle most operations...
+2427  */
+2428 const struct inode_operations ext3_dir_inode_operations = {
+2429     .create     = ext3_create,
+2430     .lookup     = ext3_lookup,
+2431     .link       = ext3_link,
+2432     .unlink     = ext3_unlink,
+2433     .symlink    = ext3_symlink,
+2434     .mkdir      = ext3_mkdir,
+2435     .rmdir      = ext3_rmdir,
+2436     .mknod      = ext3_mknod,
+2437     .rename     = ext3_rename,
+2438     .setattr    = ext3_setattr,
+2439 #ifdef CONFIG_EXT3_FS_XATTR
+2440     .setxattr   = generic_setxattr,
+2441     .getxattr   = generic_getxattr,
+2442     .listxattr  = ext3_listxattr,
+2443     .removexattr    = generic_removexattr,
+2444 #endif
+2445     .permission = ext3_permission,
+2446 };
+
+
+
+ 41 const struct file_operations ext3_dir_operations = {
+ 42     .llseek     = generic_file_llseek,
+ 43     .read       = generic_read_dir,
+ 44     .readdir    = ext3_readdir,     /* we take BKL. needed?*/
+ 45     .ioctl      = ext3_ioctl,       /* BKL held */
+ 46 #ifdef CONFIG_COMPAT
+ 47     .compat_ioctl   = ext3_compat_ioctl,
+ 48 #endif
+ 49     .fsync      = ext3_sync_file,   /* BKL held */
+ 50 #ifdef CONFIG_EXT3_INDEX
+ 51     .release    = ext3_release_dir,
+ 52 #endif
+ 53 };
+
+}}}
+
+

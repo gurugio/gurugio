@@ -1,0 +1,250 @@
+ *'''top 프로그램과 같이 특정 프로그램의 CPU 점유율을 보여주는 프로그램'''
+  * C 버전과 BASH 스크립트 버전으로 작성
+
+
+{{{:
+
+ 
+/*
+ *
+ * /proc/stat 파일을 읽어서 CPU 시간이 얼마나 지났는지 확인한다. (jiffies 단위)
+ * /proc/[pid]/stat 파일을 읽어서 프로세스가 얼마 시간동안 실행되었는지 확인한다.
+ * 이 두 값의 비율이 프로세스의 CPU 점유율이 됨
+ *
+ */
+
+
+#include <iostream>
+#include <vector>
+#include <fstream>
+#include <string>
+#include <cstdlib>
+
+
+using namespace std;
+
+
+
+// 하나의 문장을 단어 단위로 나누어서 반환해줌
+vector<string> split(const string& s)
+{
+        vector<string> ret;
+        typedef string::size_type string_size;
+        string_size i = 0;
+
+        while (i <= s.size()) { // last character of s
+
+                // skip spaces ahead of word
+                while (i <= s.size() && isspace(s[i]))
+                        i++;
+
+                string_size j = i;
+
+                // read following characters
+                while (j <= s.size() && !isspace(s[j]))
+                        ++j;
+
+                // find a word!
+                if (i != j) {
+                        ret.push_back(s.substr(i, j-i));
+                        i = j;
+                }
+
+
+        }
+
+        return ret;
+}
+
+
+//
+// /proc/stat 파일을 읽어서 프로세서 시간을 정수로 반환해줌
+//
+int read_cpu_tick(ifstream& fs)
+{
+        string cpu_line;
+
+        fs.open("/proc/stat");
+        //
+        // read CPU status from /proc/stat
+        //
+        if (!fs.is_open()) {
+                cout << "cpu file open error" << endl;
+                return -1;
+        }
+
+        while (getline(fs, cpu_line)) {
+                if (cpu_line.find(string("cpu")) != string::npos)
+                        break;
+        }
+
+        if (cpu_line.find(string("cpu")) == string::npos) {
+                cout << "read CPU tick error" << endl;
+                return -2;
+        }
+
+        fs.close();
+
+        //cout << "CPU STAT: " << cpu_line << endl;
+
+        vector<string> tick_strings = split(cpu_line);
+
+        return atoi(tick_strings[1].c_str()) +          // usr
+                        atoi(tick_strings[2].c_str()) + // nic
+                        atoi(tick_strings[3].c_str()) + // sys
+                        atoi(tick_strings[4].c_str()) + // idle
+                        atoi(tick_strings[5].c_str()) + // iowait
+                        atoi(tick_strings[6].c_str()) + // irq
+                        atoi(tick_strings[7].c_str()) + // softirq
+                        atoi(tick_strings[8].c_str());          // steal
+
+}
+
+
+//
+// /proc/[pid]/stat 파일을 읽어서 실행된 시간만 추출해서 정수로 반환
+//
+int read_process_tick(ifstream& fs, string name)
+{
+        string line;
+        string full_name = string("/proc/") + name + string("/stat");
+
+        fs.open(full_name.c_str());
+
+        if (!fs.is_open()) {
+                cout << "process file open error" << endl;
+                return -1;
+        }
+
+        if (fs.is_open() != true) {
+                cout << "read process stat error: " << full_name << endl;
+                return -1;
+        }
+
+        if (!getline(fs, line)) {
+                cout << "read file error" << endl;
+                return -2;
+        }
+
+        //cout << line << endl;
+
+        fs.close();
+
+
+        vector<string> tick_strings = split(line);
+
+        //cout << tick_strings[1] << " status:" << tick_strings[2] << endl;
+
+
+        return atoi(tick_strings[13].c_str()) + atoi(tick_strings[14].c_str());
+}
+
+
+int main(int argc, char **argv)
+{
+        ifstream cpu_stat;
+        ifstream proc_stat;
+
+
+        if (argc != 2) {
+                cout << "USAGE: top_cpu [process ID]" << endl;
+                return 0;
+        }
+
+
+        //
+        //  프로세스 시간 / CPU 시간 = CPU 점유율
+        //
+
+        int cpu_tick1 = read_cpu_tick(cpu_stat);
+        int process_tick1 = read_process_tick(proc_stat, string(argv[1]));
+
+        usleep(500000);
+
+        int cpu_tick2 = read_cpu_tick(cpu_stat);
+        int process_tick2 = read_process_tick(proc_stat, string(argv[1]));
+
+
+        //cout << "CPU: " << cpu_tick2 - cpu_tick1 << endl;
+        //cout << "PROCESS: " << process_tick2 - process_tick1 << endl;
+
+        cout << "CPU PERCENTAGE = " << (int)(process_tick2-process_tick1)*100/(cpu_tick2-cpu_tick1) << "%" << endl;
+
+
+        return 0;
+}
+
+
+}}}
+
+
+
+{{{:
+
+ #!/bin/bash
+
+
+if [ $# -ne 3 ]
+then
+        echo "USAGE: $0 [COMMAND] [PERIOD] [COUNT]"
+        exit 1
+fi
+
+echo "###################################################"
+echo "THIS PROGRAM CHECK CPU USAGE $3 TIMES PER $2 SECOND"
+echo "###################################################"
+
+
+
+# 프로그램이 이미 실행중인지 검사해서 실행이 안되었으면 실행하도록 수정할것 
+if ps -e | grep $1
+then
+        echo "Already executing"
+        exit 0
+fi
+
+echo "execute $1"
+$1 &
+
+# $!는 최근 백그라운드로 실행된 프로세스의 ID가 저장됨
+PID=$!
+echo "PID=$PID"
+
+
+CMD=$1
+PER=$2
+COUNT=$3
+CUR=0
+
+# extract cpu/memory usage
+# 프로그램이 종료할 때까지 반복하도록 수정할것
+
+
+while [ -n "$PID" ]
+do
+        # get 'top' result
+        LINE=`top -b -n 1 | grep $CMD`
+        # extract CPU column and MEMORY column
+        CPU=`echo $LINE | awk -F'[ ]' '{ print $9 }'`
+        MEM=`echo $LINE | awk -F'[ ]' '{ print $10 }'`
+
+        # program is still executing?
+        PID=`ps $PID | grep $PID | awk -F'[ ]' '{ print $1 }'`
+        echo "CPU USAGE: $CPU %   MEM USAGE: $MEM %"
+
+        sleep $PER
+
+
+        let "CUR += 1"
+        if [ $CUR -eq $COUNT ]
+        then
+                echo "$0 IS TERMINATED"
+                kill $PID
+                exit 0
+        fi
+
+done
+
+echo "$CMD is terminated"
+
+}}}

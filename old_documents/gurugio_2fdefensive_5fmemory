@@ -1,0 +1,496 @@
+{{{{font-size:30px} 메모리 관련 버그 방지 기술 (Defensive Programming for Red Hat Enterprise Linux, Ulrich Drepper) }}}
+
+[[TableOfContents]] 
+
+
+= 개요 =
+
+이미 메모리 관리를 디버깅하는 많은 툴들이 있다. valgrind, insure, purify, lint 등 다양한 툴들이 다양한 접근 방식을 가지고 디버깅을 돕는다. 이 논문에서 이야기하는 디버깅 방법은 순전히 GCC만을 사용하는 방식이다. 고가의 툴을 사용할 상황이 아니거나, 특수한 환경에서 개발하는 경우, 간단하고 빠른 디버깅을 원하는 경우 등에 사용될 수 있으리라 생각된다. 제일 좋은 것은 다양한 툴들을 모두 적용하는 것이고, 그 다음으로 보조수단으로 적용해볼 수 있는 방법이라 생각된다.
+
+= 실험 환경 =
+
+== 컴파일러 ==
+
+GCC 최신 버전에서 지원하는 기능을 확인하기 위해 GCC 4.3.3 을 사용함
+
+{{{
+gio-desk:memory_defensive$ gcc -v
+Using built-in specs.
+Target: x86_64-linux-gnu
+Configured with: ../src/configure -v --with-pkgversion='Ubuntu 4.3.3-5ubuntu4' --with-bugurl=file:///usr/share/doc/gcc-4.3/README.Bugs --enable-languages=c,c++,fortran,objc,obj-c++ --prefix=/usr --enable-shared --with-system-zlib --libexecdir=/usr/lib --without-included-gettext --enable-threads=posix --enable-nls --with-gxx-include-dir=/usr/include/c++/4.3 --program-suffix=-4.3 --enable-clocale=gnu --enable-libstdcxx-debug --enable-objc-gc --enable-mpfr --with-tune=generic --enable-checking=release --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=x86_64-linux-gnu
+Thread model: posix
+gcc version 4.3.3 (Ubuntu 4.3.3-5ubuntu4) 
+}}}
+
+== 커널 ==
+
+우분투 9.05버전, 리눅스 커널 2.6.28 사용
+
+{{{
+gio-desk:memory_defensive$ uname -a
+Linux gio-desk 2.6.28-16-generic #57-Ubuntu SMP Wed Nov 11 09:49:32 UTC 2009 x86_64 GNU/Linux
+}}}
+
+== 컴파일 옵션 ==
+
+컴파일 단계에서 지원하는 기능을 확인하기 위해 모든 컴파일 옵션, 특히 -Wextra를 사용함
+
+{{{
+gcc -Wall -Wextra -O2 -o mdebug a.c
+}}}
+
+== Makefile ==
+
+{{{
+all:
+	gcc -Wall -Wextra -O2 -o runtime_test runtime_test.c
+	gcc -Wall -Wextra -g -o free_all free_all.c
+	gcc -Wall -Wextra -g -o mem_hook mem_hook.c
+	gcc -Wall -Wextra -O2 -o locate_mem locate_mem.c
+}}}
+
+
+= 런타임에서 메모리 테스트 =
+
+최신 GCC 버전에서는 다음 상황에서 *** ~~~ *** 형태로 발견한 문제에 대해 정보를 출력한다.
+
+== 예제 코드 runtime_test.c ==
+
+테스트 코드는 다음과 같다.
+
+{{{
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void)
+{
+    int data;
+    int *p;
+
+    /* twice free
+    p = malloc(100);
+    if (p != NULL)
+        free(p);
+    free(p);
+    */
+
+    /* invalid pointer, middle of allocated memory
+    free(p+50);
+    */
+
+    /* invalid pointer, stack or static data
+    p = &data;
+    free(p);
+    */
+
+    return 0;
+}
+}}}
+
+== 이미 free한 포인터를 다시 free하기 ==
+
+{{{
+gio-desk:memory_defensive$ ./mdebug 
+*** glibc detected *** ./mdebug: double free or corruption (top): 0x0000000001003010 ***
+======= Backtrace: =========
+/lib/libc.so.6[0x7f4ed26b0cb8]
+/lib/libc.so.6(cfree+0x76)[0x7f4ed26b3276]
+./mdebug[0x400573]
+/lib/libc.so.6(__libc_start_main+0xe6)[0x7f4ed26575a6]
+./mdebug[0x400489]
+======= Memory map: ========
+00400000-00401000 r-xp 00000000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+00600000-00601000 r--p 00000000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+00601000-00602000 rw-p 00001000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+01003000-01024000 rw-p 01003000 00:00 0                                  [heap]
+7f4ecc000000-7f4ecc021000 rw-p 7f4ecc000000 00:00 0 
+7f4ecc021000-7f4ed0000000 ---p 7f4ecc021000 00:00 0 
+7f4ed2421000-7f4ed2437000 r-xp 00000000 08:03 131110                     /lib/libgcc_s.so.1
+7f4ed2437000-7f4ed2637000 ---p 00016000 08:03 131110                     /lib/libgcc_s.so.1
+7f4ed2637000-7f4ed2638000 r--p 00016000 08:03 131110                     /lib/libgcc_s.so.1
+7f4ed2638000-7f4ed2639000 rw-p 00017000 08:03 131110                     /lib/libgcc_s.so.1
+7f4ed2639000-7f4ed27a1000 r-xp 00000000 08:03 131109                     /lib/libc-2.9.so
+7f4ed27a1000-7f4ed29a1000 ---p 00168000 08:03 131109                     /lib/libc-2.9.so
+7f4ed29a1000-7f4ed29a5000 r--p 00168000 08:03 131109                     /lib/libc-2.9.so
+7f4ed29a5000-7f4ed29a6000 rw-p 0016c000 08:03 131109                     /lib/libc-2.9.so
+7f4ed29a6000-7f4ed29ab000 rw-p 7f4ed29a6000 00:00 0 
+7f4ed29ab000-7f4ed29cb000 r-xp 00000000 08:03 131096                     /lib/ld-2.9.so
+7f4ed2baa000-7f4ed2bac000 rw-p 7f4ed2baa000 00:00 0 
+7f4ed2bc7000-7f4ed2bca000 rw-p 7f4ed2bc7000 00:00 0 
+7f4ed2bca000-7f4ed2bcb000 r--p 0001f000 08:03 131096                     /lib/ld-2.9.so
+7f4ed2bcb000-7f4ed2bcc000 rw-p 00020000 08:03 131096                     /lib/ld-2.9.so
+7ffff6202000-7ffff6217000 rw-p 7ffffffea000 00:00 0                      [stack]
+7ffff62ab000-7ffff62ac000 r-xp 7ffff62ab000 00:00 0                      [vdso]
+ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
+Aborted
+}}}
+
+== 할당받은 메모리의 시작 포인터가 아닌 포인터를 해지하기 ==
+
+{{{
+*** glibc detected *** ./mdebug: free(): invalid pointer: 0x0000000001a900d8 ***
+======= Backtrace: =========
+/lib/libc.so.6[0x7f652d978cb8]
+/lib/libc.so.6(cfree+0x76)[0x7f652d97b276]
+./mdebug[0x40057b]
+/lib/libc.so.6(__libc_start_main+0xe6)[0x7f652d91f5a6]
+./mdebug[0x400489]
+======= Memory map: ========
+00400000-00401000 r-xp 00000000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+00600000-00601000 r--p 00000000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+00601000-00602000 rw-p 00001000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+01a90000-01ab1000 rw-p 01a90000 00:00 0                                  [heap]
+7f6528000000-7f6528021000 rw-p 7f6528000000 00:00 0 
+7f6528021000-7f652c000000 ---p 7f6528021000 00:00 0 
+7f652d6e9000-7f652d6ff000 r-xp 00000000 08:03 131110                     /lib/libgcc_s.so.1
+7f652d6ff000-7f652d8ff000 ---p 00016000 08:03 131110                     /lib/libgcc_s.so.1
+7f652d8ff000-7f652d900000 r--p 00016000 08:03 131110                     /lib/libgcc_s.so.1
+7f652d900000-7f652d901000 rw-p 00017000 08:03 131110                     /lib/libgcc_s.so.1
+7f652d901000-7f652da69000 r-xp 00000000 08:03 131109                     /lib/libc-2.9.so
+7f652da69000-7f652dc69000 ---p 00168000 08:03 131109                     /lib/libc-2.9.so
+7f652dc69000-7f652dc6d000 r--p 00168000 08:03 131109                     /lib/libc-2.9.so
+7f652dc6d000-7f652dc6e000 rw-p 0016c000 08:03 131109                     /lib/libc-2.9.so
+7f652dc6e000-7f652dc73000 rw-p 7f652dc6e000 00:00 0 
+7f652dc73000-7f652dc93000 r-xp 00000000 08:03 131096                     /lib/ld-2.9.so
+7f652de72000-7f652de74000 rw-p 7f652de72000 00:00 0 
+7f652de8f000-7f652de92000 rw-p 7f652de8f000 00:00 0 
+7f652de92000-7f652de93000 r--p 0001f000 08:03 131096                     /lib/ld-2.9.so
+7f652de93000-7f652de94000 rw-p 00020000 08:03 131096                     /lib/ld-2.9.so
+7fff4e3e7000-7fff4e3fc000 rw-p 7ffffffea000 00:00 0                      [stack]
+7fff4e3ff000-7fff4e400000 r-xp 7fff4e3ff000 00:00 0                      [vdso]
+ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
+Aborted
+}}}
+
+== 스택이나 정적 데이터 메모리를 해지하기 ==
+
+{{{
+*** glibc detected *** ./mdebug: free(): invalid pointer: 0x00007fffe4487424 ***
+======= Backtrace: =========
+/lib/libc.so.6[0x7fca53d4bcb8]
+/lib/libc.so.6(cfree+0x76)[0x7fca53d4e276]
+./mdebug[0x400575]
+/lib/libc.so.6(__libc_start_main+0xe6)[0x7fca53cf25a6]
+./mdebug[0x400489]
+======= Memory map: ========
+00400000-00401000 r-xp 00000000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+00600000-00601000 r--p 00000000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+00601000-00602000 rw-p 00001000 08:02 598786                             /home/gurugio/study/memory_defensive/mdebug
+0073f000-00760000 rw-p 0073f000 00:00 0                                  [heap]
+7fca4c000000-7fca4c021000 rw-p 7fca4c000000 00:00 0 
+7fca4c021000-7fca50000000 ---p 7fca4c021000 00:00 0 
+7fca53abc000-7fca53ad2000 r-xp 00000000 08:03 131110                     /lib/libgcc_s.so.1
+7fca53ad2000-7fca53cd2000 ---p 00016000 08:03 131110                     /lib/libgcc_s.so.1
+7fca53cd2000-7fca53cd3000 r--p 00016000 08:03 131110                     /lib/libgcc_s.so.1
+7fca53cd3000-7fca53cd4000 rw-p 00017000 08:03 131110                     /lib/libgcc_s.so.1
+7fca53cd4000-7fca53e3c000 r-xp 00000000 08:03 131109                     /lib/libc-2.9.so
+7fca53e3c000-7fca5403c000 ---p 00168000 08:03 131109                     /lib/libc-2.9.so
+7fca5403c000-7fca54040000 r--p 00168000 08:03 131109                     /lib/libc-2.9.so
+7fca54040000-7fca54041000 rw-p 0016c000 08:03 131109                     /lib/libc-2.9.so
+7fca54041000-7fca54046000 rw-p 7fca54041000 00:00 0 
+7fca54046000-7fca54066000 r-xp 00000000 08:03 131096                     /lib/ld-2.9.so
+7fca54245000-7fca54247000 rw-p 7fca54245000 00:00 0 
+7fca54262000-7fca54265000 rw-p 7fca54262000 00:00 0 
+7fca54265000-7fca54266000 r--p 0001f000 08:03 131096                     /lib/ld-2.9.so
+7fca54266000-7fca54267000 rw-p 00020000 08:03 131096                     /lib/ld-2.9.so
+7fffe4474000-7fffe4489000 rw-p 7ffffffea000 00:00 0                      [stack]
+7fffe45ff000-7fffe4600000 r-xp 7fffe45ff000 00:00 0                      [vdso]
+ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
+Aborted
+}}}
+
+= 할당된 메모리가 모두 해지되는가 확인 =
+
+디버깅 모드로 빌드될 때에만 호출되는 함수를 만들어서, 동적으로 할당된 메모리들이 제대로 해지되었는지 확인하는 방법이 있다. 다음 예제와 같이 .cleanup_fns라는 섹션을 만든다. 그리고 동적으로 할당된 메모리들을 검사하는 함수의 포인터를 이 섹션에 저장한다.
+
+예를 들어 예제 코드와 같이 myname이라는 변수를 검사하고 싶을 때, free_myname이라는 함수를 만들어서 cleanup_fns 섹션에 free_myname 함수의 포인터를 저장한다. 그리고 ld에서 제공해주는 __start_섹션이름, __stop_섹션이름 심볼을 이용해서 섹션에 있는 포인터를 읽어서 호출한다. 예제에서는 메모리를 해지하는 처리만을 하지만, 메모리 값을 검사하거나 에러 처리를 하는 등 마음대로 동작할 수 있다.
+
+실험결과 반드시 -g 옵션으로 빌드해야한다. 최적화를 하게되면 따로 섹션을 만들지 않는다. run_cleanup에서 하는 일이 없어서 최적화 단계에서 삭제한 것인지, -g 옵션에서만 제공하는 기능인지는 모르겠다.
+
+현실적으로 모든 변수에 대해 이런 검사를 할 수 있을지는 모르겠다. 변수를 선언하는 매크로를 따로 만들어서 변수마다 검사하는 함수를 만들 수도 있겠지만, 대규모 프로젝트에서는 사용하기 힘들겠다. 역시 모듈별 디버깅용으로 사용하는게 맞을 것 같다. 그리고 이렇게 추가적인 섹션을 만들고 섹션에 접근하는 방법이 있다는 것만 알아두어도 다양하게 사용할 수 있을것 같다.
+
+
+== 예제 소스 free_all.c ==
+
+{{{
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static char *myname = NULL;
+
+/* cleanup_fns section can be existed
+ * only if compiled with -g option
+ */
+asm (".section cleanup_fns, \"a\"");
+static void free_myname(void);
+static void (*const fn_free_myname)(void) __attribute((unused,section("cleanup_fns"))) = &free_myname;
+
+static void free_myname(void)
+{
+    printf("FREE <%s>\n", myname);
+    free(myname);
+    myname = NULL;
+}
+
+
+/* Magic symbols, GNU-linker declares these pointers */
+extern void (*const __start_cleanup_fns)(void);
+extern void (*const __stop_cleanup_fns)(void);
+
+void run_cleanup(void)
+{
+    void (*const *f)(void) = &__start_cleanup_fns;
+    printf("__start_cleanup_fns->%p\n", &__start_cleanup_fns);
+    printf("__stop_cleanup_fns->%p\n", &__stop_cleanup_fns);
+    while (f < &__stop_cleanup_fns)
+    {
+        printf("f->%p\n", f);
+        (*f++)();
+    }
+}
+
+int main(void)
+{
+    myname = malloc(100);
+    strncpy(myname, "blabla", 6);
+    myname[6] = '\0';
+
+    printf("fn_free_myname->%p\n", fn_free_myname);
+    run_cleanup();
+
+    printf("PROGRAM ENDS\n");
+    return 0;
+}
+}}}
+
+== 실행 결과 ==
+
+
+{{{
+gcc -Wall -Wextra -g -o free_all free_all.c
+}}}
+
+{{{
+fn_free_myname->0x40063c
+__start_cleanup_fns->0x400898
+__stop_cleanup_fns->0x4008a0
+f->0x400898
+FREE <blabla>
+PROGRAM ENDS
+}}}
+
+
+= 메모리 할당 후킹 =
+
+메모리가 할당/해지될 때마다 기록을 남기는 mtrace() 기능을 사용한다. mtrace() 함수는 main함수의 첫 라인에서만 호출될 수 있다. 실험결과 다른 함수에서는 mtrace()를 호출해도 동작하지 않았다. 
+
+mtrace()와 muntrace() 함수 사이에서 실행되는 메모리 할당과 해지 동작을 환경 변수 MALLOC_TRACE에 저장한 파일 이름으로 기록한다. 그리고 "mtrace 프로그램이름 기록파일이름" 형태로 mtrace 프로그램을 실행하면 기록 파일을 읽어서 문제점을 찾아낸다.
+
+== 예제 코드 mem_hook.c ==
+
+{{{
+#include <stdio.h>
+#include <stdlib.h>
+#include <mcheck.h> // for mtrace()
+
+void test_mtrace(void)
+{
+    printf("HERE! %s:%d\n", __func__, __LINE__);
+    malloc(10);
+}
+
+int main(void)
+{
+    mtrace();
+
+    void *p = malloc(10);
+    
+    printf("HERE! %s:%d\n", __func__, __LINE__);
+    malloc(20);
+    free(p);
+
+    test_mtrace();
+    muntrace();
+    
+    printf("set environment variable \"MALLOC_TRACE\"\n");
+    printf("and executes \"mtrace mem_hook $MALLOC_TRACE\"\n");
+
+    return 0;
+}
+}}}
+
+== 실행 결과 ==
+
+{{{
+gio-desk:memory_defensive$ ./mem_hook 
+HERE! main:18
+HERE! test_mtrace:8
+set environment variable "MALLOC_TRACE"
+and executes "mtrace mem_hook $MALLOC_TRACE"
+gio-desk:memory_defensive$ mtrace mem_hook log
+
+Memory not freed:
+-----------------
+           Address     Size     Caller
+0x0000000000b96460      0xa  at /home/gurugio/study/memory_defensive/mem_hook.c:10
+0x0000000000b96480     0x14  at /home/gurugio/study/memory_defensive/mem_hook.c:20
+}}}
+
+
+= 메모리 할당에 추가 정보 삽입 =
+
+메모리를 할당받을 때마다 이 메모리가 어떤 코드에서 할당된 메모리인지 기록을 남겨서 메모리를 관리하는 방법이 있다. 다음 예제 코드와 같이 실제로 사용할 메모리의 앞뒤로, 이 메모리가 어느 파일, 몇번 라인의 코드에서 할당된 것인지 문자열 데이터를 써주는 방식이다. 
+
+적용하기도 간단하고, 멀티프로세스/멀티쓰레드 환경에서도 문제가 없을 것으로 생각된다. 메모리 누수뿐 아니라, 잘못된 메모리 사용이나 함수 인자로 전달된 객체의 검사 등에도 유용할 것 같다.
+
+매크로의 중간에 삽입된 printf 함수는 코드 이해를 위해 넣은 것이므로 삭제해서 사용하면 되고, calloc, realloc 등의 다른 메모리 관리 함수들을 위한 매크로가 본 논문에 정의되어 있으므로 참고할 수 있다. 다만 논문에 실린 코드에 문제가 있을 수도 있어보이니 직접 테스트후에 사용해야 한다.
+
+== 예제 코드 locate_mem.c ==
+
+{{{
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+/*
+ * refer to "Defensive Programming for Red Hat Enterprise Linux,
+ * Ulrich Drepper.
+ */
+
+#define roundup(x,n) (((x)+((n)-1))&(~((n)-1)))
+
+#define debug_malloc(sz)                                           \
+  ({ char __line[strlen(__FILE__) + 6 * sizeof(size_t) + 3]; \
+     size_t __sz = sz; \
+     int __n = sprintf(__line, "%c%s:%d:%d", \
+                       '\0', __FILE__, __LINE__, __sz); \
+     size_t __pre = roundup(__n, 2 * sizeof(size_t)); \
+     char *__p = malloc(__sz + __pre + __n); \
+     printf("n=%d pre=%d\n", __n, __pre); \
+     printf("MALLOC->%p\n", __p); \
+     printf("LINE=%s\n", &__line[1]); \
+     if (__p != NULL) \
+       { \
+         memset(memcpy(__p, __line, __n)+__n, ' ', __pre - __n); \
+         __p[__pre - 1] = '\0'; \
+         memcpy(__p + __pre + __sz, __line, __n); \
+       } \
+     (void *) (__p + __pre); })
+
+#define debug_free(p) \
+  (void) ({ char *__p = (char *) (p) - 1; \
+            while (*--__p != '\0'); \
+            printf("FREE->%p\n", __p); \
+            free(__p); })
+
+#define get_preinfo(p) \
+    ({ char *__p = (char *) (p) - 1;            \
+        while (*--__p != '\0');                 \
+        (__p + 1); })
+
+#define get_postinfo(p) \
+    ({ char *__p = (char *)(p);                 \
+        while (*__p++ != '\0');                 \
+        (__p); })
+
+int main(void)
+{
+    char data[] = "THIS-IS-DATA";
+    char *p = debug_malloc(strlen(data));
+    char *q;
+    int i;
+
+    memcpy(p, data, strlen(data));
+
+    printf("USER DATA:%p-->%s\n", p, p);
+
+    printf("PRE DATA:\n");
+    q = p - 1;
+    printf("%p-->%X\n", q, *q);
+    while (*--q != '\0')
+    {
+        printf("%p-->%X(%c)\n", q, *q, *q);
+    }
+    printf("%p-->%X\n", q, *q);
+
+    printf("POST DATA:\n");
+    q = p + strlen(p);
+    while (*++q != '\0')
+    {
+        printf("%p-->%X(%c)\n", q, *q, *q);
+    }
+
+    printf("MEMORY's INFO:%s\n", get_preinfo(p));
+    printf("MEMORY's INFO:%s\n", get_postinfo(p));
+    
+    debug_free(p);
+
+    return 0;
+}
+
+}}}
+
+== 실행 결과 ==
+
+{{{
+n=19 pre=32
+MALLOC->0x1cb6010
+LINE=locate_mem.c:48:12
+USER DATA:0x1cb6030-->THIS-IS-DATA
+PRE DATA:
+0x1cb602f-->0
+0x1cb602e-->20( )
+0x1cb602d-->20( )
+0x1cb602c-->20( )
+0x1cb602b-->20( )
+0x1cb602a-->20( )
+0x1cb6029-->20( )
+0x1cb6028-->20( )
+0x1cb6027-->20( )
+0x1cb6026-->20( )
+0x1cb6025-->20( )
+0x1cb6024-->20( )
+0x1cb6023-->20( )
+0x1cb6022-->32(2)
+0x1cb6021-->31(1)
+0x1cb6020-->3A(:)
+0x1cb601f-->38(8)
+0x1cb601e-->34(4)
+0x1cb601d-->3A(:)
+0x1cb601c-->63(c)
+0x1cb601b-->2E(.)
+0x1cb601a-->6D(m)
+0x1cb6019-->65(e)
+0x1cb6018-->6D(m)
+0x1cb6017-->5F(_)
+0x1cb6016-->65(e)
+0x1cb6015-->74(t)
+0x1cb6014-->61(a)
+0x1cb6013-->63(c)
+0x1cb6012-->6F(o)
+0x1cb6011-->6C(l)
+0x1cb6010-->0
+POST DATA:
+0x1cb603d-->6C(l)
+0x1cb603e-->6F(o)
+0x1cb603f-->63(c)
+0x1cb6040-->61(a)
+0x1cb6041-->74(t)
+0x1cb6042-->65(e)
+0x1cb6043-->5F(_)
+0x1cb6044-->6D(m)
+0x1cb6045-->65(e)
+0x1cb6046-->6D(m)
+0x1cb6047-->2E(.)
+0x1cb6048-->63(c)
+0x1cb6049-->3A(:)
+0x1cb604a-->34(4)
+0x1cb604b-->38(8)
+0x1cb604c-->3A(:)
+0x1cb604d-->31(1)
+0x1cb604e-->32(2)
+MEMORY's INFO:locate_mem.c:48:12            
+MEMORY's INFO:IS-IS-DATA
+FREE->0x1cb6010
+}}}

@@ -1,0 +1,630 @@
+
+{{{:
+
+
+#include <stdio.h>
+
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+
+#include <linux/fb.h>
+
+#include <signal.h>
+
+
+
+// 크로스 컴파일러에 있는 videodev2 파일을 사용하면 안되고
+// 리눅스 커널에 있는 videodev2 파일을 사용할 것
+//#include <linux/videodev2.h>
+//
+
+#include "videodev2.h"
+
+
+#define STREAMBUFS  4 /* Number of streaming buffer */
+
+// 카메라 이미지 크기는 카메라 메뉴얼보고 알아내자
+#define CAM_WIDTH	640
+#define CAM_HEIGHT	480
+
+
+#define CAMERA_DEVICE "/dev/video"
+
+
+/* Device Catpure Objects */
+/*
+ * 카메라 영상 한 프레임이 저장되는 메모리 버퍼 영역을 얻기 위한 구조체
+ * 버퍼에 대한 속성 정보는 v4l2_vuffer
+ * 메모리 포인터는 data
+ * 메모리 길이는 length
+ */
+typedef struct tag_vimage
+{
+	struct v4l2_buffer vidbuf;
+	char *data;
+	int   length;
+} VIMAGE;
+
+
+
+/*
+ * 필요한 데이터 모음집
+ */
+typedef struct
+{
+	int camfd;
+
+	int width;
+	int height;
+	int depth;
+	int pixelformat;
+	
+	// 여기부터는 V4L에서 사용하는 데이터
+	int input_num;
+	
+	VIMAGE vimage[STREAMBUFS];
+	
+	struct v4l2_capability cam_cap;
+	struct v4l2_streamparm cam_parm;
+	struct v4l2_format cam_format;
+	struct v4l2_requestbuffers cam_bufreq;
+	struct v4l2_standard cam_std;
+
+	int isstreamming;	// 영상 출력 중?
+	
+
+	// 여기는 프레임버퍼 제어에 사용되는 데이터
+	int videofd;
+	struct fb_var_screeninfo screeninfo;
+	char *video_mem;
+
+} mv320_cam_t;
+
+
+/*
+ * 간단하게 하자/클래스로 바꾸기 귀찮다
+ */
+mv320_cam_t mv320_cam;
+
+
+
+/*
+ * V4L 기본 설정
+ *
+ * 사실상 드라이버 구현에 따라 드라이버에 넘겨야 할 구조체 종류나
+ * 설정 값들이 달라질 수 있다.
+ * 따라서 드라이버 코드를 같이 분석하면서 어플리케이션을 만들어야 한다.
+ * ioctl의 반환값이나 에러 값도 그대로 믿지 말고 드라이버 코드를 보고
+ * 어떤 경우에 반환되는 값인지 정확히 확인해야 한다
+ */
+int setup_camera(void)
+{
+
+	int ret = 0;
+
+
+
+	mv320_cam.camfd = open(CAMERA_DEVICE, O_RDWR);
+
+	if (-1 == mv320_cam.camfd) {
+		printf("Cannot open %s\n", CAMERA_DEVICE);
+		return -1;
+	}
+
+	printf("Open video device\n");
+
+	// 카메라 드라이버 설정에 사용되는 자료 구조 모두 초기화한다
+	// 쓰레기 값이 들어있는데 그대로 드라이버로 넘기면 
+	// 어떤 오류가 발생할지 모르므로 반드시 0으로 초기화를 해주어야 한다.
+	memset(&mv320_cam.cam_cap, 0, sizeof(mv320_cam.cam_cap));
+	memset(&mv320_cam.cam_parm, 0, sizeof(mv320_cam.cam_parm));
+	memset(&mv320_cam.cam_format, 0, sizeof(mv320_cam.cam_format));
+	memset(&mv320_cam.cam_bufreq, 0, sizeof(mv320_cam.cam_bufreq));
+	memset(&mv320_cam.cam_std, 0, sizeof(mv320_cam.cam_std));
+
+
+	//
+	// IOCTL(VIDIOC_QUERYCAP)
+	//
+
+	// 장치 기본 정보 얻어오기
+	if (ioctl(mv320_cam.camfd, VIDIOC_QUERYCAP, &mv320_cam.cam_cap) < 0) {
+		perror("ioctl error <VIDIOC_QUERYCAP>\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+
+	// 드라이버 정보
+	printf("V4L driver name: %s\n", mv320_cam.cam_cap.driver);
+	printf("v4l card name: %s\n", mv320_cam.cam_cap.card);
+	printf("v4l bus_info : %s\n", mv320_cam.cam_cap.bus_info);
+
+	if (mv320_cam.cam_cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)
+		printf("Support video capture\n");
+	else {
+		printf("No capture device!\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+
+
+	//
+	// IOCTL(VIDIOC_G_INPUT)
+	//
+
+
+	// 입력 장치 번호 얻기 
+	// 이걸 꼭 해야하는지는 모르겠음
+	if (ioctl(mv320_cam.camfd, VIDIOC_G_INPUT, &mv320_cam.input_num) != 0) {
+		printf("ioctl error <VIDIOC_G_INPUT>\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+	
+	// 입력 장치 번호 설정
+	printf("Current video input number: %d\n", mv320_cam.input_num);
+	
+
+	//
+	// IOCTL(VIDIOC_S_INPUT)
+	//
+
+	if (ioctl(mv320_cam.camfd, VIDIOC_S_INPUT, &mv320_cam.input_num) != 0) {
+		perror("ioctl error <VIDIOC_S_INPUT>\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+
+	//
+	// IOCTL(VIDIOC_G_PARM)
+	//
+
+
+	// type 필드는 어플리케이션이 설정해주어야 함
+	// VIDIOC_G_PARM, VIDIOC_G_FMT, VIDIOC_REQBUFS 등의 명령을 실행할 때마다
+	// 관련 구조체에  enum v4l2_buf_type type 라는 필드가 있다.
+	// 이 값을 항상 V4L2_CAP_VIDEO_CAPTURE 로 설정해야 한다.
+	//
+	// V4L2_CAP_VIDEO_CAPTURE 는 비디오 캡춰 스트림을 위한 값이라는 의미인데
+	// 만약 한 장치가 비디오 캡춰, 출력 등 다양한 기능이 있다면
+	// 그 중에서 비디오 캡춰에 대한 기능을 설정한다는 의미이다.
+	mv320_cam.cam_parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;	// buffer of a video capture stream
+
+
+	// 카메라의 파라미터 값은 driver/media/video/pxa3xx/camera.h 파일에 정의된 struct camera_context_s 와
+	// 관계가 있다.
+	// 드라이버는 이 구조체에 카메라 센서에 대한 정보를 저장해야 한다.
+	// mv320_camera.c 드라이버에서는 open 함수에서 camera_context_s 구조체에 설정값을 저장한다.
+
+	if (ioctl(mv320_cam.camfd, VIDIOC_G_PARM, &mv320_cam.cam_parm) != 0) {
+		perror("ioctl error <VIDIOC_G_PARM>\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+
+	printf("Camera type: %s\n", (mv320_cam.cam_parm.type == V4L2_BUF_TYPE_VIDEO_CAPTURE) ? "video capture" : "type error");
+
+	printf("cam_parm.capability=%x\n", mv320_cam.cam_parm.parm.capture.capability);
+	printf("cam_parm.capturemode=%x\n", mv320_cam.cam_parm.parm.capture.capturemode);
+
+	// struct v4l2_fract timeperframe 값을 드라이버 코드에서 설정하지 않고 있다.
+	// 그냥 카메라에서 넘어오는대로 이미지를 받고 따로 framerate를 설정하지 않는것 같음
+	printf("cam_parm.v4l_captureparm.v4l2_fract.numerator=%d\n", mv320_cam.cam_parm.parm.capture.timeperframe.numerator);
+	printf("cam_parm.v4l_captureparm.v4l2_fract.denominator=%d\n", mv320_cam.cam_parm.parm.capture.timeperframe.denominator);
+	printf("cam_parm.v4l_captureparm.readbuffers=%d\n", mv320_cam.cam_parm.parm.capture.readbuffers);
+
+	// extendedmode는 각 드라이버에서 고유하게 사용할 수 있는 파라미터 값을 저장한다.
+	// 따라서 extendedmode 값이 어떤  역할을 하는지는 드라이버 코드를 확인해야 한다.
+	// mv320_camera.c 에서는 SSU_SCALE 기능을 설정한다고 써있는데
+	// 0 외의 값을 쓰면 VIDIOC_DQBUF 명령에서 에러가 발생했다.
+	printf("extendedmode=%x\n",mv320_cam.cam_parm.parm.capture.extendedmode); 
+
+	// V4L2_MODE_HIGHQUALITY 로 설정하면 스틸 이미지 캡춰 모드이고
+	// 0이면 영상 캡춰 모드로 동작함
+	//mv320_cam.cam_parm.parm.capture.capturemode = V4L2_MODE_HIGHQUALITY; // stil image capture, no need of framerate??
+	mv320_cam.cam_parm.parm.capture.capturemode = 0; // stil image capture, no need of framerate??
+
+	//
+	// IOCTL(VIDIOC_S_PARM)
+	//
+
+
+	if (ioctl(mv320_cam.camfd, VIDIOC_S_PARM, &mv320_cam.cam_parm) != 0) {
+		perror("ioctl error <VIDIOC_S_PARM>\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+
+
+	//
+	// IOCTL(VIDIOC_G_FMT)
+	//
+
+	// video format
+	mv320_cam.cam_format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;	// cam_parm.type과 같은 값으로
+	if (ioctl(mv320_cam.camfd, VIDIOC_G_FMT, &mv320_cam.cam_format) != 0) {
+		perror("ioctl error <VIDIOC_G_FMT>\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+
+	// 드라이버에서 디폴트로 설정된 값을 보면 800X600 인데
+	// 이건 다른 드라이버 소스를 가져오면서 수정하지 않았기 때문이다.
+	// 이 값을 그대로 사용하면 VIDIOC_S_FMT 명령에서 에러가 발생한다.
+	printf("Camera capture size = %dX%d\n",
+		mv320_cam.cam_format.fmt.pix.width, mv320_cam.cam_format.fmt.pix.height);
+
+
+	// mv320_camera.c 에서는 기본적으로 YUV422 포맷으로 설정되어 있다.
+	// 영상을 저장할 용도라면 YUV422로 설정해서 파일로 저장하고
+	// 영상을 LCD에 출력할 목적이라면 RGB565로 설정해서 프레임 버퍼에 출력하면 된다.
+	if (mv320_cam.cam_format.fmt.pix.pixelformat == V4L2_PIX_FMT_YUV422P)
+		printf("Pixel format = YUV422\n");
+	else if (mv320_cam.cam_format.fmt.pix.pixelformat == V4L2_PIX_FMT_RGB555X)
+		printf("Pixel format = RGB565\n");
+	else
+		printf("Pixel format = %X\n",mv320_cam.cam_format.fmt.pix.pixelformat);
+	
+
+	//
+	// IOCTL(VIDIOC_S_FMT)
+	//
+
+	
+	// definition of an image format
+	// 카메라 센서에서는 800X600@15fps 로 영상을 보낼 수 있지만
+	// LCD가 800X480 이므로 드라이버에서 640X480으로 최대 이미지 크기를 제한하고 있다.
+	mv320_cam.cam_format.fmt.pix.width = CAM_WIDTH;
+	mv320_cam.cam_format.fmt.pix.height = CAM_HEIGHT;
+
+	mv320_cam.cam_format.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB565X;	// 16-565
+
+
+	if (ioctl(mv320_cam.camfd, VIDIOC_S_FMT, &mv320_cam.cam_format) != 0) {
+		perror("ioctl error <VIDIOC_S_FMT>\n");
+		ret = -1;
+		goto END_SETUP;
+	}
+	
+
+	//
+	// IOCTL(VIDIOC_REQBUFS)
+	//
+
+
+	mv320_cam.cam_bufreq.count = STREAMBUFS;	// 왜 4로 정했을까? V4L 홈페이지 예제에 4로 되어있음
+	mv320_cam.cam_bufreq.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+	// 카메라 영상을 저장할 버퍼를 할당받기 전에
+	// mmap 함수에 필요한 정보  등을 초기화한다.
+	// 그리고 count에 저장된 수만큼 버퍼를 준비시킨다.
+	// 드라이버에서는 camera_prepare_buffer 함수를 호출해서
+	// DMA 영역에 있는 메모리 버퍼 4개를 준비한다.
+	// 만약 이전에 할당해놓은 버퍼가 있다면 모두 해지시키고 다시 할당받는다.
+	ret = ioctl(mv320_cam.camfd, VIDIOC_REQBUFS, &mv320_cam.cam_bufreq);
+
+	if (ret < 0 || mv320_cam.cam_bufreq.count < 1) {
+		perror("ioctl error <VIDIOC_REQBUFS>\n");
+		printf("%d %d\n", ret, mv320_cam.cam_bufreq.count);
+		printf("%x %x %x\n", mv320_cam.cam_bufreq.count, mv320_cam.cam_bufreq.type, mv320_cam.cam_bufreq.memory);
+		ret = -1;
+		goto END_SETUP;
+	}
+	printf("Number of streaming buffer: %d\n", mv320_cam.cam_bufreq.count);
+
+	
+
+
+	// REQBUFS 명령으로 준비된 4개의 버퍼는 커널 영역에 존재한다.
+	// 따라서 어플리케이션에서 영상을 얻으려면 이 버퍼를
+	// 유저 영역으로 맵핑해서 사용해야 한다.
+	// 각각의 버퍼는 v4l2_buffer 구조체로 관리된다.
+	// 버퍼의 번호, 크기, 오프셋 정보등이 저장된다.
+	// 버퍼의 포인터는 v4l2_buffer에 저장되지 않으므로
+	// 따로 vimage 구조체에 data 필드에 저장해주었다.
+	for (int i = 0; i < mv320_cam.cam_bufreq.count; i++) {
+		struct v4l2_buffer *vbuf = &mv320_cam.vimage[i].vidbuf;
+
+		//
+		// IOCTL(VIDIOC_QUERYBUF)
+		//
+
+		// index에 사용되는 수는 0부터 v4l2_requestbuffers.count-1까지.
+		vbuf->index = i;
+		vbuf->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+		vbuf->memory = V4L2_MEMORY_MMAP;
+
+		// VIDIOC_REQBUFS 에서 드라이버는 영상을 저장할 버퍼를 할당해놓았다.
+		// VIDIOC_QUERYBUF 명령은 이 버퍼에 대한 정보를 반환한다.
+		if (ioctl(mv320_cam.camfd, VIDIOC_QUERYBUF, vbuf) < 0) {
+			perror("ioctl error <VIDIOC_QUERYBUF>\n");
+			ret = -1;
+			goto END_SETUP;
+		}
+
+		printf("BUFFER[#%d]: LENGTH=%d, OFFSET=%d\n", vbuf->length, vbuf->m.offset);
+
+		// v4l2_buffer.m.offset: 디바이스 드라이버가 할당받은 메모리의 오프셋
+		// 어플리케이션에서는 사용할 일이 없고 mmap 에서 사용하도록 한다.
+		// 드라이버가 가지고 있는 메모리 버퍼를 어플에서 사용할 수 있게 된다
+		mv320_cam.vimage[i].length = 0;
+		mv320_cam.vimage[i].data = (char *)mmap(0, vbuf->length, PROT_READ|PROT_WRITE, MAP_SHARED, mv320_cam.camfd, vbuf->m.offset);
+		mv320_cam.vimage[i].length = vbuf->length;
+
+		if ((int)mv320_cam.vimage[i].data < 0) {
+			perror("mmap for video buffer error\n");
+			ret = -1;
+			goto END_SETUP;
+		}
+
+	
+		//
+		// IOCTL(VIDIOC_QBUF)
+		//
+
+
+		// enqueue video buffer in driver
+		// 드라이버는 영상의 한 프레임이 저장될 메모리 버퍼들을 큐로 관리한다.
+		// VIDIOC_REQBUFS 에서 할당해놓은 메모리 버퍼를 드라이버 내부의 큐에 넣는다.
+		if (ioctl(mv320_cam.camfd, VIDIOC_QBUF, vbuf) < 0) {
+			perror("ioctl error <VIDIOC_QBUF>\n");
+			ret = -1;
+			goto END_SETUP;
+		}
+
+	}
+
+
+
+END_SETUP:
+
+
+	return ret;
+}
+
+
+
+int start_stream(void)
+{
+
+	// 영상 스트리밍을 시작하려면 V4L2_BUF_TYPE_VIDEO_CAPTURE 값을 전달하면 된다.
+	// 이 상수 값을 그대로 전달할 수 없으므로 (포인터 값이 드라이버로 넘어가므로)
+	// 이 상수 값이 저장된 변수의 주소를 전달하게 된다.
+	if (ioctl(mv320_cam.camfd, VIDIOC_STREAMON, &mv320_cam.vimage[0].vidbuf.type) < 0) {
+		perror("ioctl error <VIDIOC_STREAMON>\n");
+		return -1;
+	}
+
+	mv320_cam.isstreamming = 1;
+
+	return 0;
+
+}
+
+
+int stop_stream(void)
+{
+	if (1 == mv320_cam.isstreamming) {
+		// 영상 스트리밍을 종료하려면 V4L2_BUF_TYPE_VIDEO_CAPTURE 값을 전달하면 된다.
+		// 이 상수 값을 그대로 전달할 수 없으므로 (포인터 값이 드라이버로 넘어가므로)
+		// 이 상수 값이 저장된 변수의 주소를 전달하게 된다.
+		if (ioctl(mv320_cam.camfd, VIDIOC_STREAMOFF, &mv320_cam.vimage[0].vidbuf.type) < 0) {
+			perror("ioctl error <VIDIOC_STREAMOFF>\n");
+			printf("Fail to stop streamming\n");
+			return -1;
+		}
+
+		mv320_cam.isstreamming = 0;
+
+	}
+
+	return 0;
+
+}
+
+int get_still(const char *filename)
+{
+}
+
+
+int shutdown_camera(void)
+{
+
+	struct v4l2_buffer vbuf;
+		
+	stop_stream();
+
+	// 드라이버가 가지고 있는 큐에서 버퍼들을 꺼내고
+	// 메모리를 해지시킨다.
+	printf("Remove mmaped video buffer\n");
+	for (int i = 0; i < mv320_cam.cam_bufreq.count ; i++) {
+		memset(&vbuf, 0, sizeof(vbuf));
+		vbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+		vbuf.memory = V4L2_MEMORY_MMAP;
+
+		if (ioctl(mv320_cam.camfd, VIDIOC_DQBUF, &vbuf) < 0) {
+			perror("ioctl <VIDIOC_DQBUF>\n");
+		}
+
+
+		if (mv320_cam.vimage[vbuf.index].data != 0) {
+			munmap(mv320_cam.vimage[vbuf.index].data, mv320_cam.vimage[vbuf.index].vidbuf.length);
+			mv320_cam.vimage[vbuf.index].data = 0;
+		}
+	}
+
+
+	if (-1 == mv320_cam.camfd) close(mv320_cam.camfd);
+	mv320_cam.camfd = -1;
+
+	return 0;
+}
+
+
+
+int setup_fb(void)
+{
+
+	mv320_cam.videofd = open("/dev/fb0", O_RDWR);
+
+	if (mv320_cam.videofd < 0) {
+		perror("open video memory error\n");
+		goto END_FB;
+	}
+
+
+	// 프레임 버퍼의 정보 얻기
+	ioctl(mv320_cam.videofd, FBIOGET_VSCREENINFO, &mv320_cam.screeninfo);
+	printf("screen size: %d X %d    BitsPerPixel: %d\n", 
+			mv320_cam.screeninfo.xres, mv320_cam.screeninfo.yres, mv320_cam.screeninfo.bits_per_pixel);
+
+
+	mv320_cam.video_mem = (char *)mmap(0, 
+			mv320_cam.screeninfo.xres*mv320_cam.screeninfo.yres*(mv320_cam.screeninfo.bits_per_pixel/8),
+			PROT_READ|PROT_WRITE, MAP_SHARED, mv320_cam.videofd, 0);
+
+	printf("video memory: %X\n", mv320_cam.video_mem);
+
+	memset(mv320_cam.video_mem, 0, 800*480*2);
+
+END_FB:
+
+	return 0;
+}
+
+
+int release_fb(void)
+{
+
+	close(mv320_cam.videofd);
+	if (munmap(mv320_cam.video_mem, 
+				mv320_cam.screeninfo.xres*mv320_cam.screeninfo.yres*(mv320_cam.screeninfo.bits_per_pixel/8)) < 0) {
+		perror("error to unmap video memory\n");
+		return -1;
+	}
+
+	printf("release video memory\n");
+	return 0;
+}
+
+
+
+int display_cam(void)
+{
+	int imgfd;
+	struct v4l2_buffer vbuf;
+	char *vmem;
+	char *img;
+
+	
+	int err = 0, frame = 0;
+
+
+	while (1) {
+		printf("###################### error=%d, frame=%d\n", err, frame);
+
+		if (err > 10)
+			break;
+
+		memset(&vbuf, 0, sizeof(vbuf));
+		vbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+		vbuf.memory = V4L2_MEMORY_MMAP;
+
+		if (ioctl(mv320_cam.camfd, VIDIOC_DQBUF, &vbuf) < 0) {
+			printf("errno=%x\n", errno);
+			perror("ioctl error <VIDIOC_DQBUF>\n");
+			break;
+		}
+
+
+		vmem = mv320_cam.video_mem;
+		img = mv320_cam.vimage[vbuf.index].data;
+
+
+		printf("################################# vmem=%p    img=%p\n", vmem, img);
+
+		for (int i=0; i < CAM_HEIGHT; i++) {
+			//char *vmem = mv320_cam.video_mem + i*mv320_cam.screeninfo.xres*2;
+			//char *img = mv320_cam.vimage[vbuf.index].data + i*640*2;
+			memcpy(vmem, img, CAM_WIDTH*2);
+			vmem += mv320_cam.screeninfo.xres*2;
+			img += CAM_WIDTH*2;
+
+
+		}
+		printf("#######################  vmem=%p    img=%p\n", vmem, img);
+
+		frame++;
+
+		ioctl(mv320_cam.camfd, VIDIOC_QBUF, &vbuf);
+
+		// mt9d111 카메라는 최대 15fps로 영상을 보낸다.
+		// fps를 대강 100ms로 했는데 이걸 정확하게 제대로 설정하는 방법이 없을까?
+		usleep(100000);
+
+		// 그냥 1000프레임만 해보자
+		// 딱히 종료시킬 방법이 없네
+		//if (frame > 1000)
+		//	break;
+
+	}
+
+
+	return 0;
+
+}
+
+
+
+void signal_handler(int signo)
+{
+	printf("Ctrl+C signal occured!\n");
+
+	
+	stop_stream();
+	shutdown_camera();
+	release_fb();
+
+
+	exit(0);
+
+}
+
+int main(void)
+{
+
+	//
+	// 프로그램을 멈추고 싶으면 ctrl+c를 누를 것
+	//
+	signal(SIGINT, signal_handler);
+
+
+	setup_fb();
+
+
+	setup_camera();
+
+	start_stream();
+
+
+	sleep(1);
+	
+	display_cam();
+	
+	stop_stream();
+	shutdown_camera();
+	release_fb();
+
+	
+
+	return 0;
+}
+
+
+}}}

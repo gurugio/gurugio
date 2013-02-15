@@ -1,0 +1,18 @@
+
+= 툴 =
+
+ * SBCL - http://sbcl.sourceforge.net/
+ * LispBox - http://www.gigamonkeys.com/book/lispbox/
+ * LispWorks - http://www.lispworks.com/index.html
+
+
+= 자료 =
+
+ * 윤찬우님의 초보 가이드 - http://onlisp.blogspot.com/2008/03/common-lisp.html
+ * lisp로 주문외기 - http://gateopener.mireene.com/wordpress/
+ * Pascal Costanza의 몹시 주관적인 LISP 가이드 - http://www.cesian.com/lisp.kr.html
+
+
+= clisp =
+
+ * 소스 읽기 (load "1.lisp") - "가 반드시 있어야 함

@@ -1,0 +1,245 @@
+
+= IA32e mode - 64bit Long Mode 예제 부트로더 =
+
+
+'''부팅 후 롱모드로 진입하는 부트로더 코드입니다.'''
+
+기본적인 모드 변환 코드만 작성해보았습니다. 각 비트의 의미나 세부적인 동작 순서는 하나의 문서에 쓰기에는 내용이 좀 많으므로 인텔 메뉴얼을 참고하시길 부탁드립니다.
+
+동작 순서
+
+ 1. 스크린에 시스템이 부팅한 것을 알리는 '1' 문사 출력
+ 1. GDT 설정 (하드코딩된 5개의 디스크립터를 0x1000 주소에 복사)
+ 1. GDTR 레지스터 설정
+ 1. CR0.PE 를 셋팅하여 32비트 보호모드 진입
+ 1. 보호모드 코드로 점프 (CS 레지스터의 값을 바꾸기 위해 롱 점프를 실행한다)
+ 1. 스크린에 '2' 출력
+ 1. CR4.PAE 비트 셋팅
+ 1. 페이징을 위한 4레벨 페이지 테이블 설정
+ 1. CR3 레지스터에 PML4의 물리 주소 저장
+ 1. EFER.LME 비트를 셋팅하여 64비트 모드 활성화
+ 1. CR0.PG 비트를 셋팅하여 페이징 기능 활성화
+ 1. 페이징을 활성화하면 곧바로 롱 점프로 64비트 코드를 실행해야 함 (파이프라인의 32비트 코드를 제거하기 위함)
+ 1. EFER.LMA 비트가 1이 되었으면 64비트 롱모드로 완전히 변환된 것임
+ 1. 스크린에 '3' 출력
+ 1. 최종적으로 스크린에 123 문자가 출력되야 함
+
+
+{{{
+; IA32e - 64bit mode test bootloader
+; how to assemble : nasm -o bootsect.img bootsect.asm
+; Boot bootsect.img with floppy image with x86-64 emulator such as VMware of qemu
+
+KERNEL_CODE_SEL   equ 0x08
+KERNEL_DATA_SEL   equ 0x10
+KERNEL_CODE64_SEL   equ 0x18
+KERNEL_DATA64_SEL   equ 0x18
+
+GDT_ADDR        equ 0x1000 ; GDT at the first page frame
+GDT_SIZE    equ 0x1000 ; GDT takes one page frame
+
+
+PML4_addr equ 0x20000
+PDP_addr equ 0x21000
+PDE_addr equ 0x22000
+PTE1_addr equ 0x23000
+PTE2_addr equ 0x24000
+
+
+BIT_CR4_PAE equ 5
+BIT_CR4_PGE equ 7
+
+BIT_EFER_LME equ 8
+BIT_EFER_LMA equ 10
+BIT_EFER_SCE equ 0
+
+BIT_CR0_PE equ 0
+BIT_CR0_PG equ 31
+
+
+[bits 16]
+[org 0x7c00]
+
+start:
+
+    mov ax, cs
+    mov ds, ax
+    mov es, ax
+
+
+    ; tell BIOS that operating mode will be Long Mode
+    mov eax, 0xec00
+    mov ebx, 2
+    int 0x15
+
+    ; print log
+    mov ax, 0xb800
+    mov es, ax
+    mov bx, 0x0
+    mov al, '1'
+    mov byte [es:bx], al
+    
+
+    ; copy GDT descriptors
+    lea si, [gdt]    ; source : ds:si=0x0:gdt
+    xor ax, ax
+    mov es, ax        ; destination : es:di=0x0:0x1000
+    mov di, GDT_ADDR
+    mov cx, 8*7    ; 7 descriptors
+
+    rep movsb
+
+
+
+    cli
+    lgdt [gdtr]
+
+
+    mov eax, cr0
+    or eax, (0x1<<BIT_CR0_PE)
+    mov cr0, eax
+
+
+    jmp dword KERNEL_CODE_SEL:protect_start
+
+
+[bits 32]
+protect_start:
+    mov ax, KERNEL_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+
+    ; print log
+    mov edi, 0xb8002
+    mov al, '2'
+    mov byte [edi], al
+
+
+    ; temporary stack for booting process
+    mov esp, 0xa0000
+
+    ;set PAE bit in CR4
+    mov eax, cr4
+    or eax, (0x1<<BIT_CR4_PAE) 
+    mov cr4, eax
+
+
+    ; set PML4[0] to PDP address
+    mov edi, PML4_addr
+    mov eax, PDP_addr
+    or eax, 0x7            ; User, Writable, Present
+    mov [es:edi], eax
+
+
+    ; set PDP[0] to PDE address
+    mov edi, PDP_addr
+    mov eax, PDE_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set PDE[0] to address of the first PTE
+    mov edi, PDE_addr
+    mov eax, PTE1_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set PDE[1] to the second PTE2_addr
+    ; size of one entry is 8 byte
+    add edi, 8
+    mov eax, PTE2_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set the first & second PTE to 0~4M
+    ; physical memory 0~4MB is mapped to linear address
+    mov edi, PTE1_addr
+    mov eax, 0x7
+    mov ecx, 1024 ; 512-PTE1, 512-PTE2
+set_PTE:
+    mov [es:edi], eax
+    add eax, 0x1000
+    add edi, 8
+    dec ecx
+    jnz set_PTE
+
+
+    ; set CR3 to address of PML4
+    mov eax, PML4_addr
+    mov cr3, eax
+
+
+
+    ; enable long mode by set EFER.LME bit
+
+    ; set MSR 0xc0000080 with RDMSR, WRMSR instruction
+    ; read "system programming guide 1 - appendix B"
+    mov ecx, 0xc0000080
+    rdmsr
+    or eax, (0x1<<BIT_EFER_LME)
+    wrmsr
+
+
+    ; activate paging
+    mov eax, cr0
+    or eax, (0x1<<BIT_CR0_PG)
+    mov cr0, eax
+
+    
+    ; long jump is necessary
+    jmp KERNEL_CODE64_SEL:long_start
+
+
+
+gdtr:
+    dw GDT_SIZE
+    dd GDT_ADDR
+
+gdt:
+    dd 0x00000000, 0x00000000
+    dd 0x0000FFFF, 0x00CF9A00 ; kernel code segment for protected mode
+    dd 0x0000FFFF, 0x00CF9200 ; kernel data segment for protected mode
+    dd 0x0000ffff, 0x00AF9A00 ; longmode kernel code segment, CS.L=1, CS.D=0
+    dd 0x0000FFFF, 0x00AF9200 ; longmode kernel data segment
+
+gdt_end:
+
+
+[bits 64]
+long_start:
+    
+
+    ; test LMA((Long Mode Active) bit in EFER
+    mov ecx, 0xc0000080
+    rdmsr
+    and eax, (0x1<<BIT_EFER_LMA)
+    jz longmode_fail
+
+
+
+    ; magic number to check 64bit register is available
+    mov rax, 0x12345678abcdef00
+
+    mov rdi, 0xb8004
+    mov al, '3'
+    mov byte [rdi], al
+
+    add rdi, 2
+long_loop:
+    mov byte [rdi], al
+    add al, 1
+    jmp long_loop
+  
+
+longmode_fail:
+    mov rdi, 0xb8000
+    mov al, 'X'
+    mov byte [rdi], al
+
+    jmp $
+
+
+times 510-($-$$) db 0
+  dw 0xaa55
+
+}}}

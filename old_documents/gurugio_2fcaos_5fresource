@@ -1,0 +1,85 @@
+
+'''CaOS에서 구현된 메모리/IO 리소스 관리 방법'''
+
+
+1/16 작성중. (리눅스 커널의 방식을 그대로 따르도록 구현 예정)
+
+
+= 리눅스 커널 2.6.22 =
+
+리소스는 트리 형태로 관리됨. 
+부모 리소스가 있으면 자식 리소스는 부모 리소스의 일정 부분을 할당받음
+
+
+ * include/linux/ioport.h
+{{{
+ 13 /*
+ 14  * Resources are tree-like, allowing
+ 15  * nesting etc..
+ 16  */
+ 17 struct resource {
+ 18     resource_size_t start;
+ 19     resource_size_t end;
+ 20     const char *name;
+ 21     unsigned long flags;
+ 22     struct resource *parent, *sibling, *child;
+ 23 };
+}}}
+
+{{{
+478 /**
+479  * __request_region - create a new busy resource region
+480  * @parent: parent resource descriptor
+481  * @start: resource start address
+482  * @n: resource region size
+483  * @name: reserving caller's ID string
+*/
+
+parent로 지정된 범위 안에서 영역 할당
+
+485 struct resource * __request_region(struct resource *parent,
+486                    resource_size_t start, resource_size_t n,
+487                    const char *name)
+488 {
+
+각각의 영역은 resource 구조체로 관리
+489     struct resource *res = kzalloc(sizeof(*res), GFP_KERNEL);
+490
+491     if (res) {
+492         res->name = name;
+493         res->start = start;
+494         res->end = start + n - 1;
+495         res->flags = IORESOURCE_BUSY;
+496
+
+스핀락 잠금
+497         write_lock(&resource_lock);
+498
+499         for (;;) {
+500             struct resource *conflict;
+501
+
+parent의 자식 리소스들을 순회하면서 겹치는 영역을 가진 리소스가 있는지 확인함. 겹치는 리소스가 있으면 겹치는 리소스의 포인터 반환
+conflict = __request_resource(parent, res);
+
+겹치는 리소스가 없으면 함수 종료
+503             if (!conflict)
+504                 break;
+
+겹치는 리소스가 있으면 그 안에서 다시 할당할 수 있는지 확인
+505             if (conflict != parent) {
+506                 parent = conflict;
+507                 if (!(conflict->flags & IORESOURCE_BUSY))
+508                     continue;
+509             }
+510
+511             /* Uhhuh, that didn't work out.. */
+512             kfree(res);
+513             res = NULL;
+514             break;
+515         }
+516         write_unlock(&resource_lock);
+517     }
+518     return res;
+519 }
+}}}

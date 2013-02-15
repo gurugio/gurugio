@@ -1,0 +1,185 @@
+preorder traversal 결과와 inorder traversal 결과를 알 때 트리를 복구하는 방법
+
+설명하기가 애매한데... -_-;
+
+
+{{{#!vim c
+#include <stdio.h>
+
+/*
+ * How to make binary tree:
+ *
+ * 1. The nodes can be separated as [aLstart ~ aRoot-1]
+ * and [aRoot+1 ~ aRlimit] and [aRoot].
+ * 2. Root node in [aLstart ~ aRoot-1] is a left-child of [aRoot] node
+ * and Root node in [aRoot+1 ~ aRlimit] is a right-child of [aRoot] node.
+ * [aLstart ~ aRoot-1] is left sub-tree of [aRoot] node and vice versa.
+ * 3. make tree again with [aLstart ~ aRoot-1] and [aRoot+1 ~ aRlimit].
+ * Each sub-tree can be binary trees.
+ * */
+
+typedef struct node
+{
+    struct node *left;
+    struct node *right;
+    char data;
+}node;
+
+
+
+int size = 9;
+int preorder[] = {'f', 'b', 'a', 'd', 'c', 'e', 'g', 'i', 'h'};
+int inorder[] = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'};
+int sequence[9];
+node tree_node[9];
+
+
+void make_sequence(void)
+{
+    int i, j;
+    char node;
+
+    
+
+    // 'a' (inorder[0] is found at preorder[2] -> sequence[0] = 2
+    // 'b' (inorder[1] is found at preorder[1] ->sequence[1] = 1
+    // ...
+    // 
+    // eg 1) If sub-tree is inorder[0~8], 'f' is the first in preorder list,
+    // therefore 'f' is root of sub-tree [0~8].
+    //
+    // eg 2) In subtree [0~4], 'b' is root.
+
+    for (i=0; i<9; i++) {
+        node = inorder[i];
+        
+        for (j=0; j<9; j++) {
+            if (preorder[j] == node)
+                break;
+        }
+
+        sequence[i] = j;
+    }
+
+    for (i=0; i<9; i++)
+        printf("%c->%d\n", inorder[i], sequence[i]);
+
+    for (i = 0; i < 9; i++) {
+        tree_node[i].left = tree_node[i].right = NULL;
+        tree_node[i].data = inorder[i];
+    }
+
+}
+
+
+// find root node among inorder[start~last]
+int find_root(int start, int last)
+{
+
+    // if start == last, root node is start itself
+
+    int i = start;
+    int root = 0xff;
+    int index = start;
+    
+    // node[start~last], which is root?
+    // which sequence is the smallest?
+    for (i = start; i <= last; i++) {
+        if (sequence[i] < root) {
+            root = sequence[i];
+            index = i;
+        }
+    }
+
+    return index;
+
+
+}
+
+
+
+/*
+ *  root: index of root node of sub-tree
+ *  lstart: index of left-most node of sub-tree
+ *  rlimit: index of right-most node of sub-tree
+ */
+void tree(int root, int lstart, int rlimit)
+{
+    int new_root;
+    
+    printf("rt=%d, l=%d, r=%d\n", root, lstart, rlimit);
+
+    // no more left nodes
+    if (lstart == root) {
+        printf("node[%d]->left=NULL\n", root);
+        tree_node[root].left = NULL;
+    } 
+    // left usb-tree is there
+    else 
+    {
+        // new root of the left sub-tree
+        new_root = find_root(lstart, root-1);
+        
+        printf("node[%d]->left=node[%d]\n", root, new_root);
+
+        // original root's left is new root
+        tree_node[root].left = &tree_node[new_root];
+
+        // make tree with left sub-tree
+        tree(new_root, lstart, root - 1);
+    }
+
+    if (rlimit == root) {
+        printf("node[%d]->right=NULL\n", root);
+        tree_node[root].right = NULL;
+    } else {
+
+        // new root of the right sub-tree
+        new_root = find_root(root+1, rlimit);
+        
+        printf("node[%d]->right=node[%d]\n", root, new_root);
+
+        tree_node[root].right = &tree_node[new_root];
+        tree(new_root, root + 1, rlimit);
+    }
+
+
+    return;
+}
+
+
+
+void postorder(node *entry)
+{
+    if (entry->left != NULL) {
+        postorder(entry->left);
+    }
+
+    if (entry->right != NULL) {
+        postorder(entry->right);
+    }
+
+    printf("%c ", entry->data);
+}
+
+
+
+int main(void)
+{
+    int root;
+    make_sequence();
+    
+
+    printf("%d\n", find_root(0, 8));
+
+    root = find_root(0,8);
+
+    tree(root, 0, 8);
+
+
+    postorder(&tree_node[root]);
+
+
+    return 0;
+}
+}}}

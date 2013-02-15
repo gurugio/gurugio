@@ -1,0 +1,9 @@
+1. configuration file at trunk/ for build option and build rule
+2. add compile option "build_mode=kernel" to calib
+3. In calib, glibc function must be remove at kernel build
+mode
+4. find caos64 codes which can be library and move them to
+calib, make unit-test
+ - printf, spinlock, slab, string, page_alloc...
+5. build release policy of calib about header reference and
+library linking and so on.

@@ -1,0 +1,346 @@
+ 
+
+
+= C로 작성된 배열이 어떻게 어셈블리 코드로 변환되는가 =
+
+(2004.2 작성)
+
+
+== 배열의 정의 ==
+
+ * 배열이란 메모리에 데이터가 연속적으로 저장된 형태를 말한다.
+
+ * 각각의 데이터는 동일한 타입이고, 동일한 크기를 가진다.
+  * 각각의 데이터는 인덱스라고 말하는 순서 번호로 가르켜진다.
+
+ * 다음 3가지 요소를 가지고 특정 항목의 접근 주소를 계산할 수 있다.
+  * 첫번째 항목의 주소 
+  * 하나의 항목의 크기
+  * 인덱스 번소
+
+== 배열의 각 항목에 접근하기 ==
+
+ * C 언어와 같은 고급 언어에서는 컴파일러가 각 항목들의 주소를 계산해주지만 어셈블리 프로그래밍을 하기 위해서는 프로그래머가 접근하고자하는 항목의 주소를 직접 계산해야 한다.
+
+ * C 예제 코드 #1
+
+{{{
+
+int temp[10];  /* 전역 변수로 선언함 */
+
+int main(void)
+{
+
+  temp[0] = 1;
+
+  temp[1] = 2;
+
+  temp[3] = 3;
+  
+  return 0;
+}
+
+}}}
+  
+
+ * GCC로 컴파일된 어셈블리 코드
+  * 이 코드를 보면 배열의 인덱스를 배열의 시작주소로부터의 오프셋 값으로 치환하는 것을 볼 수 있다.
+  * 이렇게 배열의 인덱스를 오프셋 주소로 변환하는 일을 프로그래머가 해야 한다.
+  * 배열에 접근할 때 변수 이름으로 접근한다. 따라서 temp라는 배열 이름 자체의 값은 변할 수 없다. (아래 2번째 예제와 비교하면 잘 알 수 있음)
+
+
+{{{
+
+        .file        "temp.c"
+
+        .text
+
+.globl main
+
+        .type        main,@function
+
+main:
+
+        pushl        %ebp
+
+        movl        %esp, %ebp
+
+        subl        $8, %esp
+
+        andl        $-16, %esp ===> 지역 변수를 16byte align에 맞춰서 저장함
+
+         movl        $0, %eax   ===> 이 2줄은 왜 있는지 모르겠음
+         subl        %eax, %esp
+ 
+        movl        $1, temp   ===> temp[0] = 1, temp가 배열의 시작 주소
+
+         movl        $2, temp+4 ===> temp[1] = 2, temp[1]의 주소는 temp + 4
+
+        movl        $3, temp+12 ===> temp[3] = 3
+
+        movl        $0, %eax
+
+        leave
+
+        ret
+
+.Lfe1:
+
+        .size        main,.Lfe1-main   ===> main의 크기는 (Lfe1의 주소 - main: 의 주소)
+
+        .local        temp
+
+        .comm        temp,40,32  ===> 40바이트 메모리 크기의 temp 변수 생성, 32byte-align
+
+        .ident        "GCC: (GNU) 3.2.2 20030222 (Red Hat Linux 3.2.2-5)"
+
+}}}
+ 
+
+ * C 예제 코드 #2  
+
+{{{
+
+int temp[10];
+
+int main(void)
+{
+
+  int *a = temp;  /* 포인터가 지역 변수로 선언됨 */
+
+  *a++ = 1;
+
+  *a++ = 2;
+
+  *a++ = 3;
+}
+}}}
+  
+
+ * 어셈블리 코드
+
+{{{
+        ====> ebp-4는 a 변수를 가르킴, 즉 ebp-4는 메모리 주소이고 (%ebp-4)는 메모리에 저장된 값을 말함
+
+        movl        -4(%ebp), %eax  
+===> a에 저장된 값을 eax에 저장, a라는 변수의 값은 temp 배열의 시작 주소임
+
+        movl        $1, (%eax)      
+===> temp의 시작 주소의 4바이트 데이터 크기로 1을 저장
+
+        leal        -4(%ebp), %eax  
+===> (%ebp-4)라는 변수가 저장된 메모리 주소, 즉 a의 포인터를 eax에 저장함, 결론적으로 eax == ebp-4 가 됨
+===> 여기서 포인터 연산의 로드가 큼을 알 수 있음
+
+        addl        $4, (%eax)      
+===> eax에는 a의 포인터가 저장되어 있으므로, eax가 가르키는 변수의 값에다 4를 더함, 즉 *(&a) += 4 와 같음
+
+        movl        -4(%ebp), %eax  
+===> 위에서 a에 저장된 값에 4를 더했으므로 여기서부터 a 변수는 temp[1]의 주소를 저장하고 있음
+
+        movl        $2, (%eax)
+
+        leal        -4(%ebp), %eax
+
+        addl        $4, (%eax)
+
+        movl        -4(%ebp), %eax
+
+        movl        $3, (%eax)      
+===> 다시 a 변수를 사용하지 않으므로 C 코드에서는 a++라고 처리했지만 ++ 연산을 하지 않음
+
+        movl        $0, %eax
+
+        leave
+
+        ret
+
+
+  
+ * 같은 코드를 최적화 옵션을 주어서 컴파일 한 어셈블리 코드
+
+{{{
+
+        .file        "temp.c"
+
+        .text
+
+.globl main
+
+        .type        main,@function
+
+main:
+
+        pushl        %ebp
+
+        movl        %esp, %ebp
+
+        subl        $8, %esp
+
+        andl        $-16, %esp
+
+          ====> eax에 temp의 주소 값이 저장되어 있음, 자세한 사항은 로더의 기능 참고
+        movl        $1, (%eax)   ===> *a = 1
+
+        addl        $4, %eax     ===> 복잡한 포인터 연산을 하지 않음, 바로 a += 4 연산 실행
+
+        movl        $2, (%eax)
+
+        movl        $3, 4(%eax)
+
+        movl        $0, %eax
+
+        leave
+
+        ret
+
+.Lfe1:
+
+        .size        main,.Lfe1-main
+
+        .local        temp
+
+        .comm        temp,40,32
+
+        .ident        "GCC: (GNU) 3.2.2 20030222 (Red Hat Linux 3.2.2-5)"
+
+
+}}}
+
+ * '''최적화 옵션을 켜주어야 어셈블리 프로그래머들이 직접 만든 어셈블리 코드와 유사한 성능을 가진다'''
+  ** 그럼 *a++ = 1; 로 하지 않고 *a = 1; a++; 이렇게 2라인으로 코딩하면 어떻게 컴파일될까??
+
+
+ * 또다른 예제
+
+{{{
+
+---------------- original source --------------
+=> 전역 변수이므로 데이터 세그먼트에 들어간다.
+unsigned char array[] = {1, 2, 3, 4, 5};
+
+=> 함수 인자와 반환값이 스택의 어디에 위치하는지를 주목한다.
+unsigned short sigma(unsigned char *cptr, int n)
+{
+        => 지역 변수들
+        int i;
+        int sum;
+        sum = 0;
+        for (i = 0; i < n; i++)
+                sum = sum + cptr[i];
+        return sum;
+}
+
+void main()
+{
+        int retval;
+        retval = sigma(arrat, 5);
+        return;
+}
+
+}}}
+
+{{{
+--------------- listing file -------------------
+
+.386p
+.model flat
+=> 전역 변수로 선언된 배열이 데이터 세그먼트로 선언된다.
+public _array
+_DATA SEGMENT
+_array DB 01H
+       DB 02H
+       DB 03H
+       DB 04H
+       DB 05H
+_DATA ENDS
+=> 함수는 코드 세그먼트로 선언된다.
+public _sigma
+_TEXT SEGMENT
+=> bp의 값에 얼마를 더해야 변수를 가르키게 되는지 미리 정의한다.
+=> 인자로 전달된 i을 스택에서 참조하기 위해서는 ebp-8을 해야한다.
+=> 따라서 미리 _i$ 라는 상수를 -8으로 만들어서 i를 참조할 때마다 사용한다.
+=> 각각의 함수 인자들과 지역변수들을 모두 같은 방식으로 사용한다.
+_cptr$ = 8
+_n$ = 12
+_i$ = -8
+_sum$ = -4
+_sigma PROC NEAR
+
+        push ebp
+        mov ebp, esp
+        sub esp, 8
+
+; 8 :        int I;
+; 9 :        int sum;
+; 10 :        sum = 0;
+        
+        mov DWORD PTR _sum$[ebp], 0  => ebp-4 = sum
+
+; 12 :         for (i = 0; i < n; i++) sum = sum + cptr[i];
+
+        => i = 0
+        mov DWORD PTR _i$[ebp], 0
+        => for 문의 블록 부분 실행
+        jmp short $L31
+$L32:
+        => i++
+        mov eax, dword prt _$i[ebp]
+        add eax, 1
+        mov dword ptr _i$[esp], eax
+$L31:
+        => i < n 부분
+        => i 값을 ecx에 저장
+        mov ecx, dword ptr _i$[ebp]
+        => n 의 값과 비교
+        cmp ecx, dword ptr _n$[ebp]
+        => i 값이 더 크거나 같으면 루프 종료
+        jge short $l33
+        => cptr 포인터를 edx로 저장        
+        mov edx, dword ptr _cptr$[ebp]
+        => edx + i = cptr + i = cptr[i]
+        add edx, dword ptr _i$[ebp]
+        => al = cptr[i]
+        xor eax, eax
+        mov al, byte ptr [edx]
+        => sum = sum + cptr[i]
+        mov ecx, dword ptr _sum$[ebp]
+        add ecx, eax
+        mov dword ptr _sum$[ebp], ecx
+        => i++ 으로 점프
+        jmp short $L32
+$L33:
+        => 반환값이 레지스터에 들어갈 수 있으므로 ax에 저장한다.
+        mov ax, word ptr _sum$[ebp]
+        
+        => 스택 복구
+        mov esp, ebp
+        pop ebp
+        ret 0
+_sigma ENDP
+
+_text ends
+public _main
+_text segment
+_retval$ = -4
+_main proc near
+        push ebp
+        mov ebp, esp
+        push ecx
+        
+        push 5
+        push OFFSET FLAT:_array
+        call _sigma
+        add esp, 8
+        and eax, 65536
+        mov dword ptr _retval$[ebp], eax
+        
+        mov esp, ebp
+        pop ebp
+        ret 0
+_main endp
+_text ends
+end
+
+
+}}}

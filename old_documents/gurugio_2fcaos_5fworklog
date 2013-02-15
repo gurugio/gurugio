@@ -1,0 +1,932 @@
+= 개발 기록 =
+
+
+[[TableOfContents]] 
+
+
+
+
+
+
+
+
+== 2009.5.11 ==
+
+ * 프로세스 구현
+  * 프로세스 관리 데이터 구조 -> 하드웨어 기능 조사 -> init 프로세서를 만들어서 점프 -> 시스템 콜 호출관련 기본 처리 구현 -> fork 구현 -> switch 구현 -> 유저프로세스 여러개 실행 확인
+
+
+== 2009.4.28 ==
+
+ * preempt_enable/ preempt_disable 구현 - include/smp.h
+ * atomic operations 구현 - include/atomic.h
+ * spin-lock 구현 - include/spinlock.h
+
+ * 기존의 smp_init을 mp_spec_init으로 변경 -> mp_spec.c
+ * 새로운 smp_init은 smp 동작 관련 설정 초기화로 변경 -> smp.c
+
+
+== 2009.4.22 ==
+
+per-cpu 배열 구현 방안
+
+1. x8664_pda 정의 -> per_cpu의 offset 필드 포함
+2. per_cpu 섹션을 동적으로 할당받은 메모리에 복사
+3. 프로세서별 x8664_pda 구조체에서 per_cpu의 offset 필드 셋팅
+4. get_cpu_var 구현
+
+
+== 2009.4.21 ==
+
+동기화, 스케줄 등 모든 서비스를 객체로 디자인
+
+-> 설계가 간편하지만 분석이 어려워진다 
+-> 분석 문제를 보완할 수 있나?
+
+
+{{{
+sema.up / sema.down
+sched.enqueue / sched.select / sched.switched_to
+}}}
+== 2009.1.21 ==
+
+IO_APIC의 프로그래밍에 대해서 arch/x86_64/kernel/io_apic.c의 IO_APIC 디스크립터 참고할 것
+
+
+1426 static struct irq_chip ioapic_chip __read_mostly = {
+1427     .name       = "IO-APIC",
+1428     .startup    = startup_ioapic_irq,  ==> IO_APIC 초기화
+1429     .mask       = mask_IO_APIC_irq,
+1430     .unmask     = unmask_IO_APIC_irq,
+1431     .ack        = ack_apic_edge,  ==> 
+1432     .eoi        = ack_apic_level,   ==> EOI 전송
+1433 #ifdef CONFIG_SMP
+1434     .set_affinity   = set_ioapic_affinity_irq,
+1435 #endif
+1436     .retrigger  = ioapic_retrigger_irq,
+1437 };
+
+include/asm-x86/io_apic.h 에는 IO APIC와 관련된 레지스터 설정 값 등의 선언됨
+
+== 2009.1.12 ==
+
+http://asmlove.co.kr/wiki/wiki.php/gurugio/caos_smp SMP 환경 설정에 대한 문서 작업 중
+
+
+== 2009.1.10 ==
+
+ * 문서 작업
+  * code_flow.txt 작성할 것
+  * memory_map.txt 수정할 것
+
+{{{
+Code flow
+
+
+1. bootsec.asm 
+
+ - Loads setup.asm and kernel image into physical memory.
+ - Print 'C' on screen. 
+
+2. setup.asm
+ + [16bit mode]
+ - int 0x15, EAX=0xEC00, EBX=2 : tell BIOS that operating mode will be Long Mode
+ - Print 'a' on screen
+ - Set setup_msg variable zero
+ - Build GDT at 0x8000 which is used only assembly language booting stage
+ - Load GDT address into GDTR
+ - Set PE bit in CR0
+
+ + [32bit mode]
+ - Set booting-stack at 0xA0000 (At least 0x98000~0xA0000 area should be free)
+ - Set PAE bit in CR4
+ - Build PML4 table at 0x90000, PML4[0] = PML[128] = PDP address
+ - Build PDP table at 0x91000, PDP[0] = PDE address
+ - Build PDE table at 0x92000, PDE[0] = PTE0, PDE[1] = PTE1, PDE[2] = PTE2, PDE[3] = PTE3
+ - Build PTE0~3 tables at 0x93000, 0x94000, 0x95000, 0x96000
+   + Now physical memory address 0~8MB is mapped to linear address 0~8MB and also 0xFFFF800000000000~0xFFFF800000800000
+ - Load PML4 address into CR3
+ - Set EFER.LME bit in MSR 0xC0000080 to activate long-mode
+ - Set PG bit in CR0 to enable paging
+
+ + [64bit mode]
+ - Check that LMA bit in EFER is been setted.
+ - Set PAE, PGE bit in CR4 in order to flush TLB
+ - Set SCE bit in EFER
+ - Copy kernel image from 0xA000 to 0x100000
+ - Set kernel stack at KERNEL_STACK_START (0xFFFF800000000000 + 2MB)
+ - Print 'L' on screen
+ - Jump to start_kernel function with processor index as parameter 
+
+3. main.c
+ - Initialize screen output and printf is available, init_screen()
+ + Architecture-dependent setup, setup_arch()
+   - Init booting-memory manager, bootmem_init()
+   - Build GDT, IDT again, gdt_init(), idt_init(), irq_init()
+   - Build pageing-tables again, paging_init()
+   - Build mem_map and memory zones, mem_map_init(), memory_init()
+     + Page-allocation and byte-size allocation are available
+   - Read data-tables to init SMP, smp_init()
+   - Setup PIC8259, pic8259_init()
+   - Init local APIC of BSP and setup local timer, init_local_apic(), init_bsp_timer()
+   - Wake up the second processor
+ - Setup keyboard input with IRQ 0x1 through PIC8259, keyboard_init()
+ - Accept IRQs, sti()
+ - End of kernel booting
+
+
+}}}
+
+
+
+{{{
+
+1. booting step, physical memory map
+
+First, bootsect.asm loads setup.asm and kernel.img and executes setup.asm.
+Second setup.asm copies kernel.img at 0x100000 (1MB) and build GDT to activate protected mode. The setup.asm activates protected mode and immediatly long mode.
+
+The setup.asm must build paging tables (PML4,PDP,PDE,PTEs) to turn into long mode so that the linear address is considered than physical address.
+
+
+
+0x0     ~ 0x1000    BIOS reserved
+~~~~~~~~~~~ free
+
+0x8000  ~ 0x9000    GDT
+~~~~~~~~~~~ free
+
+0x9000  ~ 0xA000    setup.asm
+0xA000  ~~~~~~      first-loaded kernel
+~~~~~~~~~~~ free
+
+0x90000 ~ 0x91000   PML4
+0x91000 ~ 0x92000   PDP
+0x92000 ~ 0x93000   PDE
+0x93000 ~ 0x97000   PTE[3:0] (for 8MB-mapping)
+0xA0000 ~ 0x100000  BIOS & VIDEO
+
+0x100000 ~ 0x200000 final-loaded kernel area
+
+
+
+
+
+2. linear address mapping
+
+ 2.1 long-mode switching in setup.asm
+
+Physical memory area 0~8MB is directly mapped into linear address 0x0 and also 0xFFFF800000000000.
+Therefore physical memory 0~8MB is the same with linear address 0x0~8MB.
+
+Physical            linear address      linear address
+0x0 ~ 0x800000  =>  0x0 ~ 0x800000  &   0xFFFF800000000000 ~ 0xFFFF800000800000
+
+
+ 2.2 kernel-booting
+
+Paging tables are re-builded in paging_init() function.
+Then all physical memory is mapped into only linear address 0xFFFF800000000000, not linear address 0x0.
+
+Physical             linear address
+0x0 ~ phy_mem_size   =>    0xFFFF800000000000 ~ phy_mem_size
+
+
+
+
+3. Booting memory allocation
+
+
+For example physical memory size is 512MB, booting-memory is allocated as following.
+Total physical page-frames is 131072 and 2406 page-frames is busy.
+
+
+page index
+0x0           BIOS data
+0x9f  ~ 0xFF  BIOS and ISA video memory
+0x100 ~ 0x1FF Kernel image
+0x200         GDT
+0x201         IDT
+0x202 ~ 0x304 Paging-tables
+0x305 ~ 0xA05 mem_map table
+
+
+}}}
+
+
+
+
+ * 그래도 몇가지 중요한 이슈에 대해서는 문서를 남겨야 하지 않을까?
+  * SMP 부팅, Local-APIC, 메모리 맵, 동적 메모리 할당 등
+
+ * 이제 할일- 순서대로
+  * 커널 동기화 메소드 만들기 - 리눅스 커널에는 어떤 동기화/락킹 메소드가 있고 어떻게 구현되나?
+  * C 코드 부분이 전체적으로 재진입되도록 새로 작성
+  * SMP를 위한 커널 구조 변경
+   * 필요한 데이터 구조들?
+   * 커널 부팅 단계가 두 프로세서에서 두번 실행될 필요는 없다!
+   * SMP를 위해 어떤 설계가 필요한거지? 
+  * 어디까지 구현할 것인가?
+   * 파일시스템, 멀티프로세스 등등 너무나 많은데 어디까지 만들것인가? 무엇부터?
+   * CaOS의 주제가 뭔가? - SMP, 저전력
+   * 그럼 여기서 Cotex-A8 로 넘어갈까?
+
+
+
+== 2008.12.23 ==
+
+ * APIC는 memory-mapped IO 이므로 qemu의 콘솔에서 물리주소 0xfee00000 위치를 읽어봐도 값이 나타나지 않고, 프로그램에서 직접 읽어야 값이 읽혀진다.
+
+ * STI 명령으로 인터럽트가 허용되면 GP 폴트가 생긴다. 이유는 모르겠다.
+  * instruction manual에서 STI 설명을 보니까 IOPL이 낮으면 그렇다는데 RFLAG를 보면 IOPL이 0이다.
+  * 일단 무시하고 계속 실행하면 다시 폴트가 생기지 않음.
+  * STI/CLI는 예외를 막는 명령이 아니므로 STI 명령에서 예외가 생기는 것은
+   * 번호가 같은 IRQ가 발생했다가 pending되었다가 STI 실행 후 처리되기 때문에
+   * STI 명령이 실행될 때 뭔가 권한이 맞지 않아서
+
+
+== 2008.12.18 ==
+
+ * APIC 등이 매핑된 0xFFFC0 0000 ~ 0xFFFF FFFF 영역에 접근하기 위해서는 이 영역을 가상 메모리에 매핑해야 한다.
+  * 이 주소가 그대로 PAGE_OFFSET + 0xFFFC 0000 으로 매핑되록 하기 위해서 paging_init() 함수에서 물리 메모리 4G 전체를 가상 메모리로 매핑하고, 실제 장착된 메모리 영역과 BIOS 영역만 남기고 나머지는 해지시키자.
+  * 아니면, 특정 영역을 매핑하는 함수를 만들어? paging_map(start_addr, size) 이렇게?
+
+
+== 2008.12.16 ==
+
+ * APIC나 Local APIC 등이 맵핑된 페이지를 예약해서 커널 메모리로 설정할 것
+  * Local APIC->0xFEE00000
+  * I/O APIC -> 0xFEC00000
+
+ * 실제 컴퓨터의 리눅스 커널의 MP 설정
+
+{{{
+[    0.000000] Processor #0 6:15 APIC version 20
+[    0.000000] Processor #1 6:15 APIC version 20
+[   21.970926] CPU: Physical Processor ID: 0
+[   21.970927] CPU: Processor Core ID: 0
+[   22.338619] CPU: Physical Processor ID: 0
+[   22.338620] CPU: Processor Core ID: 1
+
+gioserver@gurugio:src64$ dmesg | grep APIC
+[    0.000000] ACPI: APIC BFE7AD97, 0068 (r1 PTLTD       APIC    6040000  LTP        0)
+[    0.000000] ACPI: Local APIC address 0xfee00000
+[    0.000000] ACPI: LAPIC (acpi_id[0x00] lapic_id[0x00] enabled)
+[    0.000000] Processor #0 6:15 APIC version 20
+[    0.000000] ACPI: LAPIC (acpi_id[0x01] lapic_id[0x01] enabled)
+[    0.000000] Processor #1 6:15 APIC version 20
+[    0.000000] ACPI: LAPIC_NMI (acpi_id[0x00] high edge lint[0x1])
+[    0.000000] ACPI: LAPIC_NMI (acpi_id[0x01] high edge lint[0x1])
+[    0.000000] ACPI: IOAPIC (id[0x02] address[0xfec00000] gsi_base[0])
+}}}
+
+== 2008.12.15 ==
+
+ * IRQ 처리를 하기 위해서는 APIC에 대한 처리가 먼저 되야 함!!
+  * IRQ 처리가 되어야 키보드 입력/타이머 & 스케줄링 이 되므로 문제가 됨
+  * 타이머에 의한 스케줄링이 아닌 cooperative-scheduling 으로 할까?
+  * 지금 프로세스가 실행되야 할 필요는 없다. 스케줄링도 x86_64의 TSS 기능과 관련이 있으므로 하드웨어 처리가 필요해진다!!
+  * '''x86_64의 멀티코어/APIC 등 64비트 하드웨어 관련 처리를 시작하자!!!'''
+
+
+== 2008.12.07 ==
+
+ * Vmware 에서 실행하면 페이징 테이블 새로 만든 후 write_cr3()에서 재부팅됨
+  * 새로운 값을 쓸때면 항상 문제가 생김
+  * TLB를 플러시 한 후에 write_cr3를 해도 안됨
+  * 캐시는 아직 활성화되어있지 않음 
+
+
+
+== 2008.12.03 ==
+
+=== 롱모드에서 인터럽트 처리 ===
+
+'''특징'''
+
+ * 모든 핸들러를 64비트로 작성해야 함
+ * 스택 접근 단위가 8바이트
+ * RSP 주소가 16바이트로 정렬됨
+ * 인터럽트가 발생하면 항상 SS:RSP를 스택에 저장함
+ * CPL이 바뀌면, 즉 유저 모드에서 발생한 인터럽트를 처리할 때 SS 셀렉터 값이 0이 됨
+ * IST (Interrupt-Stack table)이라는 새로운 스택 변환 방식을 사용할 수 있음 (옵션)
+
+
+'''인터럽트가 발생했을 때 프로세서의 동작'''
+
+ 1. RSP를 16바이트 단위로 정렬
+ 1. IST 필드가 0 이 아니면 IST를 읽어서 RSP에 저장
+ 1. 권한 레벨이 바뀌면 TSS에서 RSP 값을 읽어옴
+ 1. 권한 레벨이 바뀌면 SS는 널 셀렉터가 됨
+ 1. 인터럽트 발생 이전의 SS:RSP를 스택에 저장
+ 1. 64비트 RFLAGS를 스택에 저장
+ 1. RFLAGS에서 TF,NT,RF 비트를 클리어
+ 1. 디스크립터의 타입이 인터럽트 게이트면 RFLAGS.IF를 클리어, 트랩 게이트이면 그대로 유지
+ 1. CS:RIP 값을 스택에 저장
+ 1. 에러 코드를 가지는 인터럽트이면 에러 코드를 스택에 저장
+ 1. 인터럽트 디스크립터에서 세그먼트 셀렉터 값을 읽어서 CS 에 저장
+ 1. 인터럽트 디스크립터에서 오프셋 값을 읽어서 RIP 에 저장
+
+== 2008.12.02 ==
+
+ * '''어셈블리만든 함수를 호출할 수 있는가??'''
+  * ELF64비트 포맷의 어셈블리 오브젝트의 링크 가능
+  * 단 데이터 접근이 안됨!!!
+  * 데이터에 접근할 때의 주소 방식이 32비트와 다르므로 기계 코드가 생성이 안되는것 같음
+  * 함수 호출은 가능함
+
+== 2008.11.26 ==
+
+ * 메모리 관리 자료 : http://kernelstudy.tistory.com/category/Linux/Memory
+== 2008.11.24 ==
+
+ * bochs를 SMP와 x86-64 가 함께 지원되도록 하려면 새로 컴파일해야 함
+  * bochs-p4-smp는 SMP 기능만 지원함
+  * bochs.exe 는 x86-64 기능만 지원함
+
+ * 특정 선형주소가 있을 때, 그 주소에 해당하는 페이징 테이블 엔트리를 얻는 방법
+  * 0xFFFF 8000 0000 1000 의 주소에서
+  * 현재 프로세스의 메모리 디스크립터에는 현재 프로세스가 사용하는 PGD의 선형 주소가 저장되어있음: mm->pgd
+  * pgd_t *pgd_entry = pgd_offset(지금 프로세스의 메모리 디스크립터, 0xFFFF800000001000)
+  * pud_t *pud_entry = pud_offset(pgd_addr, 0xFFFF800000001000)
+  * pmd_t *pmd_entry = pmd_offset(pud_addr, 0xFFFF800000001000)
+  * pte_t *pte_entry = pte_offset(pmd_addr, 0xFFFF800000001000)
+
+
+ * 메모리 관리 기능을 초기화하는 주요 함수 정리
+{{{
+
+setup_memory() - memory.c
+{
+bootmem_init() - page.c
+paging_init() - page.c
+init_memmap() - memory.c
+init_node() - memory.c
+}
+
+
+bootmem_init()
+{
+1. init boot_bitmap[] array
+2. set bits that corresponding to the allocated-pages
+- these pages are statically allocated, always the same pages are allocated.
+}
+
+paging_init()
+{
+1. set PGD/PTE entry that corresponding to the allocated-paging for booting
+2. kernel image and kernel heap/stack exist at 1MB~4MB, PGD/PTE entry for those memory are initialized.
+}
+
+virt_to_page, page_to_virt() defined.
+
+init_mem_map()
+{
+1. allocate memory for mem_map through alloc_bootmem() (, or statically??)
+2. initialize mem_map entry which are already allocated for booting memory, their count member is 1.
+}
+
+
+alloc_pages, free_pages() defined. - buddy algorithm??
+
+init_node()
+{
+initialized node/zone structure!!
+}
+
+}}}
+== 2008.11.21 ==
+
+ * '''링커 스크립트에서 가상 주소를 64비트로 지정할 수 없음'''
+  * nasm에서 생성한 ELF64 헤더를 ld에서 읽을 때 문제가 생기는것 같음
+  * head.asm 을 없애고 바로 main.c 가 실행되게 하면 정상 동작함
+
+{{{
+
+x86_64-pc-linux-ld -nodefaultlibs -nostdlib -Map link_map.txt --defsym KERNEL_VMA=0xFFFF800000100000 
+  -o main.tmp -T ld-script.ld  head.o main.o screen.o io.o printf.o string.o
+
+head.o: In function `_start':
+head.asm:(.text+0xd): relocation truncated to fit: R_X86_64_32 against `.text'
+make: *** [main.img] 오류 1
+}}}
+
+
+=== gcc-4.3.2 소스를 x86-64 용 크로스컴파일러로 만드는 방법 ===
+
+
+gmp-4.2.1.tar.bz2 받고 설치
+
+ * configure --prefix=/usr/cross
+ * make
+ * make check
+ * make install
+ * ldconfig 실행해줄 것
+
+gcc-4.3.2.tar.gz 받고 설치
+
+ * ./configure --target=x86_64-pc-elf --prefix=/usr/cross --disable-nls --enable-languages=c,c++ 
+     --with-newlib --without-headers --with-gmp-lib=/usr/cross/lib --with-gmp-include=/usr/cross/include
+
+ * make all-gcc
+ * make install-gcc
+ 
+
+문제 상황
+
+ * gmp.h 가 없거나 libgmp.so를 못찾을 때 : gmp가 /usr/cross에 설치되었나?
+ * configure에서 mpfr이 없다는 에러 : mpfr의 소스 경로를 설정했나?
+
+
+
+== 2008.11.17 ==
+
+ * 화면에 글자를 출력하기 위한 screen.c 와 포트제어 io.c 파일 추가
+ 
+ * gcc에서 inline 함수선언은 어떻게 동작하는 걸까?
+  * 왜 outb 함수에 inline 선언을 해도 인라인으로 삽입되지 않을까?
+  * 다른 포트 제어 함수는 인라인으로 처리되나?
+== 2008.11.10 ==
+
+ * nasm 에서는 elf64 로 어셈블이 되고 gcc -m64 로 64비트 코드를 만들지만 ld 에서 64비트 오브젝트 파일을 인식하지 못함
+  * 64비트용 크로스 컴파일을 하기 위해 크로스컴파일용 binutils 를 컴파일해서 만들어야 함
+  * gioserver@gurugio:longmode_main$ ld -b elf64-x86-64 --oformat elf64-x86-64 -o main.tmp -Ttext 0x100000 head.img
+  * ld: i386:x86-64 architecture of input file `head.img' is incompatible with i386 output
+
+
+ * i386 머신에서 x86-64 코드를 만들기 위해서 x86-64용 크로스 컴파일러를 만들기
+  * binutils-2.17 버전만 사용가능??
+  * http://wiki.osdev.org/GCC_Cross-Compiler_for_x86_64
+  * http://kkamagui.tistory.com/507
+
+{{{:
+./configure --target=x86_64-pc-linux --enable-64-bit-bfd --disable-shared
+make configure-host
+make LDFLAGS="-all-static"
+make install
+}}}
+
+== 2008.11.1 ==
+
+ * 롱모드 변환 코드 작성함
+  * 완전히 64비트로 전환되었나? 좀더 처리해야 할 사항이 없는지 메뉴얼 확인할 것
+  * 64비트로 전환되었는지 플래그 비트들을 확인할 것
+
+
+{{{:
+KERNEL_CODE_SEL		equ 0x08
+KERNEL_DATA_SEL		equ 0x10
+GDT_ADDR        equ 0x1000
+TSS_ADDR        equ 0x2000
+
+PML4_addr equ 0x20000     ; PML4 ?뚯씠釉붿쓣 0x100000 ?꾩튂?????
+PDP_addr equ 0x21000
+PDE_addr equ 0x22000
+PTE1_addr equ 0x23000
+PTE2_addr equ 0x24000
+
+
+
+[bits 16]
+[org 0x9000]
+
+setup_start:
+
+    mov ax, cs        ; cs=ds=es=0x0
+    mov ds, ax
+    mov es, ax
+
+    ; tell BIOS that operating mode will be Long Mode
+    mov eax, 0xec00
+    mov ebx, 2
+    int 0x15
+
+    mov ax, 0xb800
+    mov es, ax
+    mov bx, 0x2
+    mov al, byte [setup_msg]
+    mov byte [es:bx], al
+    
+    ; clear TSS
+    ; 0x2000 ~ 0x2FFF is allocated for TSS
+    mov edi, TSS_ADDR
+    xor eax, eax
+    mov ecx, 26
+    cld
+    rep stosd
+
+    ;
+    ; make TSS segment descriptor
+    ;
+    xor eax, eax
+    mov eax, TSS_ADDR
+    mov [descriptor4+2], ax
+    shr eax, 16
+    mov [descriptor4+4], al
+    mov [descriptor4+7], ah
+
+
+    lea si, [gdt]    ; source : ds:si=0x0:gdt
+    xor ax, ax
+    mov es, ax        ; destination : es:di=0x0:0x1000
+    mov di, GDT_ADDR
+    mov cx, 8*7    ; 7 descriptors
+
+    rep movsb
+
+    cli
+    lgdt [gdtr]
+
+
+    mov eax, cr0
+    or eax, 0x0000001
+    mov cr0, eax
+
+
+    jmp dword KERNEL_CODE_SEL:protect_start
+
+
+[bits 32]
+protect_start:
+    mov ax, KERNEL_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
+    mov edi, 0xb8004
+    mov al, byte [protect_msg]
+    mov byte [edi], al
+
+
+    ; temporary stack for booting process
+    mov esp, 0x9ffff
+
+    ;set PAE bit in CR4
+
+    mov eax, cr4
+    or eax, (0x1<<5)
+    mov cr4, eax
+
+
+
+    ; set PML4[0] to PDP address
+    mov edi, PML4_addr
+    mov eax, PDP_addr
+    or eax, 0x7            ; User, Writable, Present
+    mov [es:edi], eax
+
+
+    ; set PDP[0] to PDE address
+    mov edi, PDP_addr
+    mov eax, PDE_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set PDE[0] to address of the first PTE
+    mov edi, PDE_addr
+    mov eax, PTE1_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set PDE[1] to the second PTE
+    add edi, 8
+    mov eax, PTE2_addr
+    or eax, 0x7
+    mov [es:edi], eax
+
+    ; set the first & second PTE to 0~4M
+
+    mov edi, PTE1_addr
+    mov eax, 0x7
+    mov ecx, 1024
+set_PTE:
+    mov [es:edi], eax
+    add eax, 0x1000
+    add edi, 8
+    dec ecx
+    jnz set_PTE
+
+
+    ; set CR3 to address of PML4
+    mov eax, PML4_addr
+    mov cr3, eax
+
+
+
+    ; enable long mode
+
+    ; set MSR 0xc0000080 with RDMSR, WRMSR instruction
+    ; read manual, system programming guide 1 - appendix B
+
+    mov ecx, 0xc0000080
+    rdmsr
+    or eax, 0x00000100
+    wrmsr
+
+
+	; activate paging
+    mov eax, cr0
+    or eax, 0x80000000
+    mov cr0, eax
+
+    
+	; long jump is necessary
+    jmp 0x18:long_start
+
+
+
+setup_msg    db "a", 0
+protect_msg    db "O", 0
+
+
+gdtr:
+    dw 0x1000
+    dd GDT_ADDR
+
+gdt:
+    dd 0x00000000, 0x00000000
+    dd 0x0000FFFF, 0x00CF9A00 ; kernel code segment for protected mode
+    dd 0x0000FFFF, 0x00CF9200 ; kernel data segment for protected mode
+    dd 0x0000ffff, 0x00AF9A00 ; longmode code segment, CS.L=1, CS.D=0
+    dd 0x0000FFFF, 0x00AF9200 ; longmode data segment
+
+
+    ;dd 0x00000000, 0x00000000    ; for TSS descriptor
+descriptor4:
+    dw 104
+    dw 0
+    db 0
+    db 0x89
+    db 0
+    db 0
+
+    dd 0x0000FFFF, 0x00cfFA00  ; user code segment
+    dd 0x0000FFFF, 0x00cfF200  ; user data segment
+    dd 0x00000000, 0x00000000
+gdt_end:
+
+
+[bits 64]
+long_start:
+    mov rax, 0x12345678abcd0000
+
+    mov rdi, 0xb8006
+    mov al, byte [long_msg]
+
+long_loop:
+    mov byte [rdi], al
+	add al, 1
+	jmp long_loop
+	
+
+
+    jmp $
+
+long_msg    db "L", 0
+times 4096-($-$$) db 0
+
+
+}}}
+== 2008.10.29 ==
+
+ * 논문: http://glukjeoluk.tistory.com/category/%EC%93%B0%EC%9E%98%EB%95%8C%EA%B8%B0%20%EC%97%84%EB%8A%94%EA%B2%83%EB%93%A4/Operating%20System
+  * 중요한 개념들 이해하기 http://asmlove.co.kr/wiki/wiki.php/gurugio/caos_refer_paper
+  * 원본 사이트 http://www.csie.fju.edu.tw/~yeh/research/papers/os-reading-list/os-reading-list.html
+
+ * x86_64 롱모드 관련 자료
+  * 커널 소스 분석 http://www.iamroot.org/bbs/view.php?id=tip_tech&no=8
+
+ * OSDEV 홈페이지 http://wiki.osdev.org/Main_Page
+  * 롱모드 해설 http://wiki.osdev.org/Long_Mode
+  * 롱모드 예제 http://wiki.osdev.org/Entering_Long_Mode_Directly
+  * 다른 공개 OS 참고할 것 http://wiki.osdev.org/Projects
+
+ * CPUID 명령어 메뉴얼 : Intel® Processor Identification and the CPUID Instruction
+
+ * 프로세서가 INTEL64 아키텍처를 지원하는지 확인하는 코드
+  * 어셈블 방법 (nasm2.0 이상을 사용할 것) nasm -o boot.img bootsect.asm
+  * qemu-system-x86_64.exe 로 실행 결과 '''롱모드 지원됨'''
+   * CPUID.0x1.edx = 0x078bfbfd (PAE(bit6)=1, PSE(bit3)=1, PSE-32(bit17)=1)
+   * CPUID.0x80000001.edx = 0x2191abfd (INTEL64(bit29)=1)
+
+{{{
+
+
+;====================================================
+; FILE NAME: bootsect.asm
+;       nasm -o boot.img bootsect.asm
+;====================================================
+
+
+[bits 16]
+
+[org 0x0]
+
+BOOT_SEG        equ 0x7c0
+
+        jmp BOOT_SEG:start
+
+
+start:
+        mov ax, cs
+        mov ss, ax
+        mov sp, 0x0
+
+
+        ; STEP 1. check CPUID is available
+
+        ; eflag 의 21번 비트가 CPUID 명령어를 지원하는지를 나타내는 비트가
+        ; 이 비트의 값을 소프트웨어가 소프트웨어가 반전할 수 있으면 CPUID 명령을 지원함
+        pushf
+        pop eax
+        mov ebx, eax
+        xor eax, 0x200000       ; 반전
+        push eax
+        popf
+        pushf
+        pop eax
+
+        mov edx, 0x11111111
+        jz no_longmode
+
+        mov ax, 0xb800
+        mov es, ax
+        mov bx, 0x0
+        mov al, '1'
+        mov byte [es:bx], al
+
+        ;-----------------------------
+        ; STEP 2. Dual Processor
+
+        mov eax, 0x1
+        cpuid
+        mov ecx, eax
+
+        ; eax[13:12] : Processor Type
+        ; 10 = Dual Processor
+        and eax, 0x3000
+        xor eax, 0x200000
+
+        mov edx, 0x22222222
+        jz no_longmode
+
+
+        ; edx[3]: Page size Extension
+        ; edx[5]: Model Specific Registers
+        ; edx[6]: Physical Address Extension
+        ; edx[13]: Page Global Enable
+        and edx, (0x1<<3 | 0x1<<5 | 0x1<<6 | 0x1<<13)
+
+        mov edx, 0x33333333
+        jz no_longmode
+
+        mov ax, 0xb800
+        mov es, ax
+        mov bx, 0x2
+        mov al, '2'
+        mov byte [es:bx], al
+
+        ;------------------------------
+        ; STEP 3. Extended CPUID functions is available
+
+        mov eax, 0x80000000
+        cpuid
+
+        ; eax: the largest extended function number
+        ; 최소한 0x80000001 은 지원되야 함
+        cmp eax, 0x80000001
+        mov edx, 0x33333333
+        jb no_longmode
+
+
+        mov ax, 0xb800
+        mov es, ax
+        mov bx, 0x4
+        mov al, '3'
+        mov byte [es:bx], al
+
+
+        ;--------------------------------
+        ; STEP 4. INTEL 64 instruction setup
+
+        mov eax, 0x80000001
+        cpuid
+        and edx, (0x1<<29)
+
+        mov edx, 0x44444444
+        jz no_longmode
+
+
+        mov ax, 0xb800
+        mov es, ax
+        mov bx, 0x6
+        mov al, '4'
+        mov byte [es:bx], al
+
+
+        ;; 화면 첫줄에  1234가 출력되야 함
+        ;;
+
+        jmp $
+
+
+no_longmode:
+
+        mov ax, 0xb800
+        mov es, ax
+        mov bx, 0x0
+        mov al, 'X'
+        mov byte [es:bx], al
+
+        jmp $
+
+
+
+times 510-($-$$) db 0
+        dw 0xaa55
+
+}}}
+== 2008.10.21 ==
+
+=== QEMU 사용법 ===
+
+ * [http://bellard.org/qemu/ qemu 홈페이지]
+
+ * QEMU 장점
+  * 게스트 동작 중간에 멈춘 상태에서 메모리 데이터, 레지스터 값 등을 확인할 수 있음
+  * 하디디스크에 써진 데이터를 raw 포맷으로 확인 가능
+  * 스냅샷 기능으로 게스트의 특정 상황을 반복해서 실행 가능
+
+ * 윈도우용 qemu 홈페이지
+  * http://www.h7.dion.ne.jp/~qemu-win/
+
+ * QEMU에서 snapshot을 저장할 하드디스크 이미지 생성하기
+  * qemu-img.exe create -f qcow2 caoshdd.img 100M
+  * qcow2 포맷으로 만들면 100M 크기의 파일이 바로 생기는 것이 아니라 새로 써진 데이터만 파일에 써지므로 보다 작은 크기의 파일이 생성됨
+  
+ * QEMU의 모니터링 기능 사용
+  * http://en.wikibooks.org/wiki/QEMU/Monitor
+  * http://bellard.org/qemu/qemu-doc.html#SEC12
+  * '''화면을 스크롤하기 위해서는 CTRL+PGUP/PGDOWN 을 누를 것'''
+  * CTRL+ALT+2 - 모니터 콘솔창
+  * CTRL+ALT+1 - 게스트로 복귀
+  * '''info registers : show the cpu registers''' 
+  * '''-snapshot 옵션을 넣어주어야 스냅샷에 저장됨'''
+  * '''메모리 값 덤프 기능도 있음'''
+  * x/fmt addr : Virtual memory dump starting at addr. 
+  * xp/fmt addr : Physical memory dump starting at addr. 
+   * fmt syntax is: `/{count}{format}{size}'
+   * count : is the number of items to be dumped. 
+   * format : x (hex), d (signed decimal), u (unsigned decimal), o (octal), c (char) or i (asm instruction). 
+   * size : b (8 bits), h (16 bits), w (32 bits) or g (64 bits). 
+   * 데이터 확인 사용예 : xp /20x 0x100000 -> 4바이트씩 20개 출력
+   * 데이터 확인 사용예 : xp /20gx 0x100000 -> 8바이트씩 20개 출력
+   * 코드 디버깅 사용예: xp /20hi 0x9000 -> 16비트로 어셈블된 20개의 명령어 출력
+  * '''memsave addr size file : 가상 메모리의 특정 번지를 파일이 덤프'''
+
+ * QEMU 사용법
+  * C:\qemu-20080810-windows>qemu-system-x86_64.exe -L . -m 32 -snapshot -fda  floppy.img -hda caoshdd -boot a -smp 2
+  * qemu.exe : x86_32 에물레이터
+  * qemu-system-x86_64.exe: AMD64 에물레이터
+  * -L . : 롬 바이오스와 키맵 설정을 현재 디렉토리에서 찾음
+  * -m 32 : 메모리 크기
+  * -fda floppy.img : 부팅 플로피디스크 이미지
+  * -smp 2 : 2개의 프로세서 사용, 최대 255까지 지원함
+  * http://www.h7.dion.ne.jp/~qemu-win/HowToFloppyCdrom-en.html
+  * http://wiki.archlinux.org/index.php/Qemu#Moving_data_between_host_and_guest_OS
+  * http://tipc.wiki.sourceforge.net/QEMU+Cheat+Sheet
+
+ * '''QEMU에서 사용한 하드디스크 이미지를 호스트에서 읽기'''
+  * 하드디스크 이미지가 qcow2 포맷이면 raw 포맷으로 변환
+   * qemu-img convert windows.img -O raw windows.raw
+  * 마운트해서 읽어보기 
+   * sudo mount -o loop,offset=32256 windows.img /media/qemu
+  * raw 포맷을 qcow2 로 변환해서 사용
+   * qemu-img convert windows.img -O qcow windows.qcow
+
+
+=== bochs 사용법 ===
+
+ * http://bochs.sourceforge.net/
+  * SMP, IO-APIC 등의 기능이 있으므로 qemu와 함께 테스트해볼 필요가 있음
+  * 플로피 이미지의 크기가 1.44MB 이어야 인식함
+== 2008.10.20 ==
+
+ * uC/OS를 이용한다고 해도 메모리 관리/스케줄링/듀얼프로세서 관리 등은 다시 만들어야 함
+  * uC/OS의 몇가지 기능만 참고할 수 있을 것임
+  * '''CaOS-32bit를 더 많이 활용해야 함!!'''
+
+
+== 2008.10.13 ==
+
+ * 현재 페이지 생성
+
+ * 참고 자료 조사 
+  * ucos를 그대로 아니면 수정해서 사용할 수 있을까?
+  * 그 외에 다른 공개 OS는?
+
+ * ucos가 리눅스 환경으로 포팅된 소스가 있다면?
+  * GCC를 사용할 수 있음
+  * 필요한 소스를 가져다 쓸 수 있음

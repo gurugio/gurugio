@@ -1,0 +1,766 @@
+[[TableOfContents]] 
+
+= 동기화 Synchronization =
+
+
+프로세스의 동기화뿐 아니라 커널 실행의 동기를 맞추기 위한 방법 조사
+
+
+== Operating System Concepts chap 7. Process Synchronization ==
+
+공룡책에서의 동기화에 대한 근본적인 개념
+
+ * 공유 데이터에 여러 프로세스/쓰레드가 동시에 접근하게 될 때 데이터의 consistency를 보장하기 위해
+ * 논리적인 주소 공간을 공유하는 프로세스들의 실행 순서를 조정하기 위해
+
+즉, 공룡책에서는 유저/커널 프로세서/쓰레드가 실행 순서와 공유 데이터 접근을 위한 수단으로 동기화를 정의하고 있다.
+
+Critical Section의 정의
+
+ * n개의 프로세스가 있을 때 프로세스들이 공유하는 변수, 테이블, 파일 등이 있다.
+ * 프로세스들이 공유하고 있는 데이터를 바꾸는 코드 흐름을 Critical Section 이라 정의한다.
+
+하나의 프로세스가 자신의 Critical section을 실행하고 있다면 다른 프로세스들은 아무도 critical section을 실행하지 못하게 해야 한다 (Mutually exclusive의 정의). 따라서 critical section 문제는 프로세서들이 어떻게 협력하는가에 대한 프로토콜이라고 할 수 있다.   
+
+각각의 프로세스는 자신의 Critical section에 진입할 수 있도록 허가를 받아야 한다. 이런 허가를 요청하는 코드를 entry section이라 정의하고, critical section에서 빠져나오는 코드를 exit section이라고 한다. 
+
+{{{
+
+do
+{
+    <entry section>
+
+    CRITICAL SECTION
+
+    <exit section>
+
+    REMAINDER SECTION
+
+} while (1);
+
+}}}
+
+동기화 문제를 해결하기 위한 솔루션은 다음 세가지 조건을 만족해야 한다.
+
+1. Mutual Exclusion: 하나의 프로세스가 critical section을 실행중이면 다른 프로세스는 critical section을 실행할 수 없다.
+2. Progress (진행?): critical section에 진입하기 위해 entry section에서 대기중인 프로세스들만 critical section에 진입할 수 있는 후보가 된다. 만약 remainder section을 실행하고 있는 프로세서라면 critical section에 진입할 수 없다. 그리고 후보 중에서 특정 프로세스를 선택하는 작업은 즉시 이루어져야 한다 '''''(개념이 애매하지만 이런 선택 작업에서 여러 조건을 따지거나 판단하면서 지연되는 일이 없어야 한다는 것 같음)'''''
+3. Bounded Waiting: 다른 프로세스가 critical section을 실행하는 동안 한 프로세스가 critical section을 요청하였을 경우, 무한정 대기하지 못하도록 대시 시간에 대해 제한할 수 있어야 한다. '''''(이것도 중요한 문제임)'''''
+
+
+=== Semaphores ===
+
+
+세마포어의 정의
+
+ * 세마포어 S는 정수값을 가지는 변수이다.
+ * wait/signal이라는 2개의 atomic 연산으로만 접근할 수 있다.
+
+wait의 정의
+
+{{{
+
+wait (S) 
+{
+  while (S <= 0)
+    ;
+  S--;
+}
+
+}}}
+
+signal의 정의
+
+{{{
+
+signal (S) 
+{
+  S++;
+}
+
+}}}
+
+
+wait와 signal의 실행은 atomic 해야 한다. 하나의 프로세스가 세마포어의 값을 수정하고 있을 때 (wait/signal이 실행중일 때) 다른 프로세스는 세마포어의 값을 수정할 수 없어야 한다. 특히 wait 에서 S의 값을 확인하는 while (S<=0) 코드와 값을 수정하는 코드 S--는 한번에 실행되어야 한다. 
+
+위와 같이 구현된 세마포어를 이용하면 critical section의 진입을 기다리는 프로세스는 루프를 돌면서 기다려야 한다. 이런 상황을 busy waiting이라 한다. 하나의 프로세서가 있는 상황에서 이런 busy waiting은 다른 프로세스가 일할 수 있는 시간을 잡아먹으므로 문제가 될 수 있다. 이런 타입의 세마포어를 spinlock 이라 부른다.
+
+spinlock은 멀티프로세서 시스템에서 유용할 수 있다. spinlock의 장점은 프로세스의 컨텍스트 스위칭 시간을 아낄 수 있다는 것이다. 따라서 세마포어의 대기 시간이 비교적 짧다고 예상될 때는 spinlock이 더 효과적이다.
+
+busy waiting을 없애기 위해서 다음과 같이 세마포어 연산을 수정할 수 있다. 
+
+{{{
+
+typedef struct {
+	int value;
+	struct process *L;
+} semaphore;
+
+void wait(semaphore S)
+{
+	S.value--;
+	if (S.value < 0) {
+		add this process to S.L;
+		block();
+	}
+}
+
+void signal(semaphore S)
+{
+	S.value++;
+	if (S.value <= 0) {
+		remove a process P from S.L;
+		wakeup(P);
+	}
+}
+
+}}}
+
+프로세스는 wait 함수를 호출해서 세마포어의 값을 확인한다. 세마포어의 값이 양수가 아니라면 busy waiting을 하는 대신에 자기 자신을 블록하고, 세마포어에 포함된 프로세스 리스트에 프로세스를 등록한다. 세마포어를 얻지 못한 프로세스는 잠들고 세마포어의 프로세스 리스트에 등록된다. 
+
+세마포어는 음수 값을 가질 수 있다. 세마포어가 음수일 때, 그 절대값은 세마포어를 기다리면서 잠든 프로세스의 갯수를 의미한다. 그리고 잠든 프로세스를 깨울 때 어느 프로세스를 깨울 것인가에 대해서는 세마포어의 정의에서 명시하지 않는다. 시스템의 목적에 따라 선택할 수 있다.
+
+그리고 세마포어의 wait/signal 연산이 atomic하게 실행되도록 보장하는 방법에 대해서도 시스템에 따라 다르게 구현할 수 있다. 프로세서가 하나일 때 인터럽트를 금지하는 방법은 하드웨어적인 방법을 사용하는 것이고, 소프트웨어적인 방법도 있을 수 있다.
+
+
+== Understanding the linux kernel chap 5 동기화에 대한 개론 ==
+
+=== 커널의 preemption 관련 동기화 ===
+
+'''''프로세서의 경쟁조건과 임계 영역 처리도 하나의 동기화 기법이다. 경쟁 조건은 MUTEX와 유사하고, 임계 영역은 쓰레드 자체가 하나의 임계 영역이라고 생각해도 될듯하다.'''''
+
+
+ * 커널이 선점형이거나 비선점형이거나 프로세스가 잠드는 경우에 프로세스 스위칭이 일어나는 것은 같다.
+ * 선점형 커널에서는 프로세스가 커널 모드에서 실행 중이라도 어떤 비동기적인 이벤트 (인터럽트 발생) 등에 의해 스위칭이 일어날 수 있다.
+ * 선점형/비선점형에 구분없이 커널 모드에서 처리를 완료한 후 스케줄러가 실행되면 스위칭된다.
+ * 비선점형 커널에서는 현재 프로세스가 유저 모드로 진입하기 직전이 아닌 이상 스위칭되지 않는다. '''''(과거 리눅스 커널이 비선점형이었을 때는 프로세스가 커널 모드로 실행을 마치고 유저 모드로 복귀하기 직전에 마지막으로 스케줄러를 호출하도록 되어있다. 즉 커널 모드로 실행되는 중간에는 스위칭이 되지 않았다.)''''' 
+
+'''결론적으로 선점형 커널에서는 프로세스가 커널 모드에서 기능을 수행하던 중간에도 스위칭 될 수 있어야 한다.'''
+
+
+커널 선점은 thread_info 디스크립터의 preempt_count 필드가 0보다 클 때 금지된다.
+
+ *   linux/arch/x86/include/asm/thread_info.h
+
+{{{
+  26struct thread_info {
+  27        struct task_struct      *task;          /* main task structure */
+  28        struct exec_domain      *exec_domain;   /* execution domain */
+  29        __u32                   flags;          /* low level flags */
+  30        __u32                   status;         /* thread synchronous flags */
+  31        __u32                   cpu;            /* current CPU */
+  32        int                     preempt_count;  /* 0 => preemptable,
+  33                                                   <0 => BUG */
+  34        mm_segment_t            addr_limit;
+  35        struct restart_block    restart_block;
+  36        void __user             *sysenter_return;
+  37#ifdef CONFIG_X86_32
+  38        unsigned long           previous_esp;   /* ESP of the previous stack in
+  39                                                   case of nested (IRQ) stacks
+  40                                                */
+  41        __u8                    supervisor_stack[0];
+  42#endif
+  43};
+}}}
+
+
+preempt_count 관련 매크로
+
+ * preempt_enable() : 선점 카운트를 1 감소, preempt_check_resched() 함수 호출
+
+{{{
+#define preempt_enable() \
+do { \
+        barrier();\
+        preempt_count() -= (1)\
+        barrier(); \
+        preempt_check_resched(); \  ===> 선점이 가능한지 다시 확인해서 스케줄러 호출
+} while (0)
+
+
+#define preempt_check_resched() \
+do { \
+        if (unlikely(test_thread_flag(TIF_NEED_RESCHED))) \  ===> 선점 카운터가 감소해도 곧바로 태스크가 스케줄될 확률이 작으므로 unlikely로 선언됨!!
+                preempt_schedule(); \
+} while (0)
+}}}
+
+ * preempt_enable_no_resched() : 선점 카운트를 감소시키기만 함
+
+{{{
+#define preempt_enable_no_resched() \
+do { \
+        barrier();\
+        preempt_count() -= (1)\
+} while (0)
+}}}
+
+ * preempt_disable() : 선점 카운터 1 감소
+
+{{{
+#define preempt_disable() \
+do { \
+        preempt_count() -= (1)\
+        barrier(); \
+} while (0)
+}}}
+
+ * get_cpu(): 선점 금지후 로컬 프로세서의 ID 반환
+ * put_cpu(): preempt_enable()과 동일함
+ * put_cpu_no_resched(): preempt_enable_no_resched() 와 동일함
+
+{{{
+#define get_cpu()               ({ preempt_disable(); smp_processor_id(); })
+#define put_cpu()               preempt_enable()
+#define put_cpu_no_resched()    preempt_enable_no_resched()
+}}}
+
+'''''get_cpu() 등의 매크로는 preempt_disable() 등의 선점 관련 매크로와 동일한데 굳이 이렇게 다시 만들어준 이유가 무엇일까?'''''
+==> 프로세서라는 객체를 얻거나/반환하는 개념을 구현하기 위함이 아닐까?
+==> 프로세서를 얻는다는 것은 다른 쓰레드가 동일한 프로세서에서 실행되지 않도록 하는 것이므로 선점을 금지하는 것과 같은 의미가 된다
+
+
+
+=== 커널 동기화가 언제 필요해지는가? ===
+
+다음 경우의 코드에서 임계 영역을 특별히 신경써야 한다.
+
+ * 예외 핸들러 / 인터럽트 핸들러, 
+ * 미룰 수 있는 함수??, 
+ * 커널 스레드
+
+
+한개의 CPU가 있는 시스템
+
+ * 인터럽트를 금지시 : 인터럽트가 금지되면 스케줄링이 일어나지 못함
+ * 커널 선점 금지: 어떤 자료 구조가 시스템 콜 서비스로만 접근될 때 커널 선점을 금지하는 것만으로도 임계 영역 처리가 가능해짐
+
+
+여러개의 CPU가 있는 시스템 : 커널은 다양한 동기화 기법을 제공해야 하고, 효율적인 동기화 문제 해결을 위해 좋은 커널 디자인을 구현해야 한다.
+
+
+=== 동기화를 필요로 하지 않는 경우 ===
+
+ * 인터럽트 핸들러에서는 동일한 인터럽트가 발생하지 않도록 PIC를 설정한다. 따라서 재진입 함수로 코딩될 필요가 없다. '''''(커널의 전역 변수에 접근할 때는 동기화 필요하지만 재진입과는 다른 이야기임)'''''
+
+ * softirq나 tasklet에 의해서만 접근되는 per-CPU 변수는 동기화가 필요없다.
+
+ * 특정한 고유의 tasklet으로 처리되는 자료 구조는 동기화가 필요없다.
+
+'''''인터럽트 핸들러 외에는 다 이해가 안됨, softirq나 tasklet에 대해 더 이해할 필요가 있음'''''
+
+== Understanding the linux kernel chap 5 주요 동기화 기법 구현 ==
+
+|| 기법 || 설명 || 범위 ||
+|| per-CPU 변수 || CPU 마다 동일한 자료 구조를 따로 가짐 || 모든 CPU ||
+|| Atomic operation || 카운터를 읽기/쓰기/수정하는 atomic한 연산 || 모든 CPU ||
+|| Memory barrier || 컴파일러와 프로세서의 instruction reordering 방지 || Local CPU와 All CPUs 모두 ||
+|| Spin lock || Lock with busy wait || All CPUs ||
+|| Semaphore || Lock with blocking wait (sleep) || All CPUs ||
+|| Seqlocks || Lock based on an access counter || All CPUs ||
+|| Local interrupt disabling || 로컬 CPU의 인터럽트 금지 || Local CPU ||
+|| Local softirq disabling || 로컬 CPU의 softirq 금지 || Local CPU ||
+|| Read-copy-update (RCU) || 락이 필요없는 데이터 구조 공유 (포인터 이용) || All CPUs ||
+ 
+
+=== Per-CPU 변수 ===
+
+동일한 자료형을 CPU마다 따로 가지고 있는 동기화 기법이다. 멀티 프로세서 환경에서 락 설정을 위한 오버헤드가 없고, 각 per-cpu 별로 자기가 속한 CPU의 캐시에 맞게 정렬되도록 생성하므로 캐시에 대해 좋은 성능을 가진다.
+
+멀티프로세서의 동기화에 대한 해결은 되지만 커널 선점을 위한 동기화 문제는 해결되지 않으므로 per-cpu 변수를 얻기 위해서 커널 선점을 금지시켜야 한다. 
+
+ * DEFINE_PER_CPU(type, name)
+
+{{{
+ 19 /* Separate out the type, so (int[3], foo) works. */
+ 20 #define DEFINE_PER_CPU(type, name) \
+ 21     __attribute__((__section__(".data.percpu"))) __typeof__(type) per_cpu__##name
+}}}
+
+예를 들어 DEFINE_PER_CPU(int, foo) 라고 선언하면 
+
+{{{
+__typeof__(int) per_cpu__foo 
+}}}
+
+가 되고 __typeof__는 gcc의 매크로함수이므로 
+
+{{{
+ int per_cpu__foo
+}}}
+
+가 된다.
+
+
+ * per_cpu(name, cpu) : name이라는 per-cpu 배열중 cpu 에 해당하는 요소 반환
+
+{{{
+ 28 /* var is in discarded region: offset to particular copy we want */
+ 29 #define per_cpu(var, cpu) (*({              \
+ 30     extern int simple_identifier_##var(void);   \
+ 31     RELOC_HIDE(&per_cpu__##var, __per_cpu_offset(cpu)); }))
+
+ 68 #ifndef RELOC_HIDE
+ 69 # define RELOC_HIDE(ptr, off)                   \
+ 70   ({ unsigned long __ptr;                   \
+ 71      __ptr = (unsigned long) (ptr);             \
+ 72     (typeof(ptr)) (__ptr + (off)); })
+ 73 #endif
+}}}
+
+per_cpu는 위와 같이 정의된다. '''''simple_identifier_##var는 뭔지 모르겠음'''''
+
+RELOC_HIDE는 뭘까? 우선 &per_cpu__#var는 DEFINE_PER_CPU에서 정의된 per-cpu 배열의 이름이라는 것을 알 수 있다.
+
+그리고 __per_cpu_offset이 뭔지 이해하기 위해서는 다음 매크로 정의들을 이해해야 한다.
+
+{{{
+ 14 #define __per_cpu_offset(cpu) (cpu_pda(cpu)->data_offset)
+
+ 37 #define cpu_pda(i) (_cpu_pda[i])
+
+ 31 struct x8664_pda *_cpu_pda[NR_CPUS] __read_mostly;
+
+ 10 /* Per processor datastructure. %gs points to it while the kernel runs */
+ 11 struct x8664_pda {
+ 12     struct task_struct *pcurrent;   /* 0  Current process */
+ 13     unsigned long data_offset;  /* 8 Per cpu data offset from linker
+ 14                        address */
+ 15     unsigned long kernelstack;  /* 16 top of kernel stack for current */
+ 16     unsigned long oldrsp;       /* 24 user rsp for system call */
+ 17         int irqcount;           /* 32 Irq nesting counter. Starts with -1 */
+ 18     int cpunumber;          /* 36 Logical CPU number */
+ 19 #ifdef CONFIG_CC_STACKPROTECTOR
+ 20     unsigned long stack_canary; /* 40 stack canary value */
+ 21                     /* gcc-ABI: this canary MUST be at
+ 22                        offset 40!!! */
+ 23 #endif
+ 24     char *irqstackptr;
+ 25     int nodenumber;         /* number of current node */
+ 26     unsigned int __softirq_pending;
+ 27     unsigned int __nmi_count;   /* number of NMI on this CPUs */
+ 28     short mmu_state;
+ 29     short isidle;
+ 30     struct mm_struct *active_mm;
+ 31     unsigned apic_timer_irqs;
+ 32 } ____cacheline_aligned_in_smp;
+
+}}}
+
+가장 먼저 알아야 할 사항은 per-CPU 배열들은 DEFINE_PER_CPU 매크로에서 정의하듯이 .data.percpu 섹션에 저장된다는 것이다. 그런데 이렇게 저장된 배열은 한개뿐이다. DEFINE_PER_CPU(int, foo) 로 정의한 foo 변수는 한개의 int 형 변수이지 CPU 갯수만큼 정의된 배열이 아닌 것이다. 리눅스 커널의 setup_per_cpu_areas 함수를 찾아보면 부팅 메모리 할당자에서 페이지를 할당받고 .data.percpu 섹션을 CPU 갯수만큼 복사하는 것을 볼 수 있다.
+
+예를 들어 커널에 per-cpu 변수가 DEFINE_PER_CPU(int, foo) 뿐이고 4개의 CPU가 있다면 커널 이미지에는 1개의 int foo 변수가 있을 것이지만 커널이 부팅된 후에는 커널 힙 영역에 4개의 int foo 변수가 생성된다. 따라서 각각의 CPU가 자기 고유의 foo 변수를 가진 것 처럼 per-cpu 변수를 만들게 된다.
+
+각각의 cpu마다 struct x8664_pda 데이터를 가진다. 그리고 struct x8664_pda 구조체의 data_offset 변수는 원래 커널 이미지에 포함된 .data.percpu 섹션으로부터 새롭게 복사되서 생성된 per-cpu 배열의 오프셋이 저장된다. 
+
+예를 들어 원래의 .data.percpu 섹션의 주소가 0x120000 이고 섹션의 크기가 16바이트라고 한다. 그리고 복사한 곳이 0x200000 이라면 0번 cpu의 per-cpu 데이터는 0x200000 에 있을 것이고, 1번 cpu의 per-cpu 데이터는 0x200010 에 있을 것이다. 따라서 0번 cpu의 data-offset 값은 0xE0000 이고, 1번 cpu의 data-offset 값은 0xE0010 이 된다.
+
+결론적으로 RELOC_HIDE는 동적으로 재배치된 per-cpu 데이터의 주소를 계산해주는 일을 한다. per-cpu 배열은 DEFINE_PER_CPU 매크로를 이용해 처음 선언할 때는 하나의 변수이지만 동적으로 복사되어서 per-cpu 배열이 된다는 것을 알아야 한다.
+
+{{{
+.data.percpu 섹션
+0x120000 - 0x120007 : u64 foo
+0x120008 - 0x12000F : u64 bar
+
+CPU #0 per-cpu 데이터 (data-pffset = 0xE0000)
+0x200000 - 0x200007 : u64 per_cpu__foo
+0x200008 - 0x20000F : u64 per_cpu__bar
+
+CPU #1 per-cpu 데이터 (data-pffset = 0xE0010)
+0x200010 - 0x200017 : u64 per_cpu__foo
+0x200018 - 0x20001F : u64 per_cpu__bar
+
+RELOC_HIDE(&per_cpu__bar, __per_cpu_offset(0))
+-->  RELOC_HIDE(0x120008 + 0xE0000)
+--> RELOC_HIDE(0x200008)
+
+RELOC_HIDE(&per_cpu__bar, __per_cpu_offset(1))
+-->  RELOC_HIDE(0x120008 + 0xE0010)
+--> RELOC_HIDE(0x200018)
+}}}
+
+
+ * __get_cpu_var(name)
+
+per_cpu 매크로와 동일하지만 CPU를 지정하지 않고 현재 실행중인 CPU의 pda를 찾아내는 차이가 있다. x86_64 코드에서는 항상 gs 레지스터가 해당 CPU의 pda 구조체의 주소를 저장하고 있으므로 인라인 어셈블리로 이 값을 읽어오면 된다.
+
+
+ * get_cpu_var(name)
+
+커널 선점을 금지시킨 후 __get_cpu_var 매크로를 호출한다.
+
+
+ * put_cpu_var(name)
+
+커널 선점을 허용하는 일만 한다. per-cpu 변수를 처리하는 일을 하지 않지만 get_cpu_var 의 처리를 끝내기 위해 만들어진 것 같다.
+
+
+ * alloc_percpu(type)
+ * free_percpu(type)
+ * per_cpu_ptr(pointer, cpu)
+
+'''''이해하지 못함'''''
+
+per-cpu 배열을 동적으로 만든다. struct percpu_data라는 구조체를 사용한다. 이 구조체는 void 형 포인터를 CPU 갯수만큼 가지고 있는 구조체이다.
+
+{{{
+ 36 struct percpu_data {
+ 37     void *ptrs[NR_CPUS];
+ 38 };
+}}}
+
+아마도 이 구조체를 동적으로 만들고, per-cpu 배열도 동적으로 만들어 사용하는 것 같다. 예를 들어 다음과 같이 사용하지 않을까?
+
+{{{
+struct percpu_data *int_percpu = alloc_percpu(int);
+int *int_percpu_cpu1 = per_cpu_ptr(int_percpu, 1);
+int data = *int_percpu_cpu1;
+}}}
+
+
+=== atomic operation ===
+
+2개의 CPU가 동시에 변수값을 바꾸면 두 CPU모두 옳지않은 값을 가지게 된다. CPU는 메모리에 접근하기 위해 메모리 버스를 이용하므로 버스 이용을 serialize / exclusive (여러가지 용어가 있는것 같음) 한다면 이런 문제를 해결할 수 있다.
+
+ * x86-64의 경우
+  * 정렬된 메모리에 한번만 접근하는 명령어는 원자적이다.
+  * LOCK 접두어 사용: 어셈블리 명령어 앞에 LOCK 접두어를 쓰면, 버스를 잠그고 CPU가 버스를 독점하게 해준다.
+  * rep 접두어 사용: rep 접두어는 같은 명령어를 여러번 반복하게 해주는데 각 명령어들은 atomic하지 않다.
+
+
+'''''정렬된 메모리에 접근한다는 것은 주소 버스에 주소를 한번만 쓰고, 데이터 버스에서도 데이터를 한번만 읽는다는 의미이다. 주소 버스와 데이터 버스는 각각 하나이므로 당연히 배타적인 접근이 된다. 만약 정렬되어 있지 않다면 여러번 버스를 읽거나 써야하고 배타적이지 않게 되므로 정렬된 메모리라는 것이 중요하다'''''
+
+
+멀티프로세서 시스템에서는 atomic_t 타입의 변수를 만들어서 원자적으로 변수의 값을 바꿀 수 있는 매크로를 제공한다. 또 비트 마스크 처리를 위한 매크로도 제공한다.
+'''''유니프로세서 시스템에서는 LOCK 접두사가 필요없다. rep 접두어를 사용할 때는 인터럽트나 커널 선점을 금지시키고 사용하면 된다.'''''
+
+
+ * atomic_t 타입 선언: 정수형 카운터로 정의된다. atomic_t 타입은 모든 아키텍처에서 int 타입으로 정의된다.
+ * ATOMIC_INIT(i): 변수의 값을 설정한다. atomic_t v = ATOMIC_INIT(0); 과 같이 사용한다.
+ * atomic_read(v): 변수의 값을 읽는다.
+ * atomic_set(v): 변수에 값을 쓴다.
+
+atomic_t 타입의 값을 읽거나 쓰는 것은 한번의 메모리 접근을 실행하므로 별다를 처리 없이 원자적으로 실행된다. (->확실하지 않음)
+
+{{{
+ 20 /*
+ 21  * Make sure gcc doesn't try to be clever and move things around
+ 22  * on us. We need to use _exactly_ the address the user gave us,
+ 23  * not some alias that contains the same information.
+ 24  */
+ 25 typedef struct { int counter; } atomic_t;
+ 26
+ 27 #define ATOMIC_INIT(i)  { (i) }
+ 28
+ 29 /**
+ 30  * atomic_read - read atomic variable
+ 31  * @v: pointer of type atomic_t
+ 32  *
+ 33  * Atomically reads the value of @v.
+ 34  */
+ 35 #define atomic_read(v)      ((v)->counter)
+ 36
+ 37 /**
+ 38  * atomic_set - set atomic variable
+ 39  * @v: pointer of type atomic_t
+ 40  * @i: required value
+ 41  *
+ 42  * Atomically sets the value of @v to @i.
+ 43  */
+ 44 #define atomic_set(v,i)     (((v)->counter) = (i))
+}}}
+
+
+ * LOCK_PREFIX: 최근 커널에서는 다음과 같이 정의된다. 이해하기 어렵지만 섹션 선언이나 기타 지시어를 빼면 lock 명령어만 남는다. 실제로 2.6.11 이하에서는 단순히 lock 명령어로만 선언되어 있다.
+
+{{{
+132 #ifdef CONFIG_SMP
+133 #define LOCK_PREFIX \
+134         ".section .smp_locks,\"a\"\n"   \
+135         "  .align 8\n"          \
+136         "  .quad 661f\n" /* address */  \
+137         ".previous\n"           \
+138             "661:\n\tlock; "
+139
+140 #else /* ! CONFIG_SMP */
+141 #define LOCK_PREFIX ""
+142 #endif
+}}}
+
+
+ * atomic_add(int i, atomic_t *v): *v에 i를 더함
+ * atomic_sub(int i, atomic_t *v): *v에 i를 뺌
+ * atomic_inc(atomic_t *v): *v의 값을 1 증가
+ * atomic_dec(atomic_t *v): *v의 값을 1 감소
+
+더하기와 빼기, 증가, 감소는 어셈블리 명령어가 있으므로 LOCK_PREFIX만 붙이면 된다. 더하기 빼기등의 명령어는 프로세서의 마이크로명령어가 메모리에 읽기-쓰기 동작을 하므로 여러번 메모리 접근이 일어난다. 따라서 반드시 LOCK_PREFIX를 붙여야 한다. (->확실하지 않음)
+
+{{{
+ 46 /**
+ 47  * atomic_add - add integer to atomic variable
+ 48  * @i: integer value to add
+ 49  * @v: pointer of type atomic_t
+ 50  *
+ 51  * Atomically adds @i to @v.
+ 52  */
+ 53 static __inline__ void atomic_add(int i, atomic_t *v)
+ 54 {
+ 55     __asm__ __volatile__(
+ 56         LOCK_PREFIX "addl %1,%0"
+ 57         :"=m" (v->counter)
+ 58         :"ir" (i), "m" (v->counter));
+ 59 }
+ 60
+ 61 /**
+ 62  * atomic_sub - subtract the atomic variable
+ 63  * @i: integer value to subtract
+ 64  * @v: pointer of type atomic_t
+ 65  *
+ 66  * Atomically subtracts @i from @v.
+ 67  */
+ 68 static __inline__ void atomic_sub(int i, atomic_t *v)
+ 69 {
+ 70     __asm__ __volatile__(
+ 71         LOCK_PREFIX "subl %1,%0"
+ 72         :"=m" (v->counter)
+ 73         :"ir" (i), "m" (v->counter));
+ 74 }
+}}}
+
+{{{
+ 96 /**
+ 97  * atomic_inc - increment atomic variable
+ 98  * @v: pointer of type atomic_t
+ 99  *
+100  * Atomically increments @v by 1.
+101  */
+102 static __inline__ void atomic_inc(atomic_t *v)
+103 {
+104     __asm__ __volatile__(
+105         LOCK_PREFIX "incl %0"
+106         :"=m" (v->counter)
+107         :"m" (v->counter));
+108 }
+109
+110 /**
+111  * atomic_dec - decrement atomic variable
+112  * @v: pointer of type atomic_t
+113  *
+114  * Atomically decrements @v by 1.
+115  */
+116 static __inline__ void atomic_dec(atomic_t *v)
+117 {
+118     __asm__ __volatile__(
+119         LOCK_PREFIX "decl %0"
+120         :"=m" (v->counter)
+121         :"m" (v->counter));
+122 }
+}}}
+
+
+
+ * atomic_sub_and_test(int i, atomic_t *v): *v에 i를 뺀 후 결과가 0이면 1을 반환하고 0이 아니면 0을 반환한다. (즉 원래의 값이 양수였는지 확인하면서 동시에 값을 0으로 바꾸는 기능) atomic_add_and_test 는 없다. SETE 어셈블리 명령어는 제로 플래그가 1이면 오퍼랜드를 1로 설정하고 아니면 0으로 설정한다.
+ *
+
+
+{{{
+ 76 /**
+ 77  * atomic_sub_and_test - subtract value from variable and test result
+ 78  * @i: integer value to subtract
+ 79  * @v: pointer of type atomic_t
+ 80  *
+ 81  * Atomically subtracts @i from @v and returns
+ 82  * true if the result is zero, or false for all
+ 83  * other cases.
+ 84  */
+ 85 static __inline__ int atomic_sub_and_test(int i, atomic_t *v)
+ 86 {
+ 87     unsigned char c;
+ 88
+ 89     __asm__ __volatile__(
+ 90         LOCK_PREFIX "subl %2,%0; sete %1"
+ 91         :"=m" (v->counter), "=qm" (c)
+ 92         :"ir" (i), "m" (v->counter) : "memory");
+ 93     return c;
+ 94 }
+}}}
+
+
+ * atomic_add_negative(int i, atomic_t *v): *v에 i를 더한 후 결과가 음수면 1을 반환하고, 음수가 아니면 0을 반환한다. SETS 어셈블리 명령어는 SIGN 플래그의 값이 1이면 오퍼랜드를 1로 설정하고 아니면 0으로 설정한다.
+
+{{{
+162 /**
+163  * atomic_add_negative - add and test if negative
+164  * @i: integer value to add
+165  * @v: pointer of type atomic_t
+166  *
+167  * Atomically adds @i to @v and returns true
+168  * if the result is negative, or false when
+169  * result is greater than or equal to zero.
+170  */
+171 static __inline__ int atomic_add_negative(int i, atomic_t *v)
+172 {
+173     unsigned char c;
+174
+175     __asm__ __volatile__(
+176         LOCK_PREFIX "addl %2,%0; sets %1"
+177         :"=m" (v->counter), "=qm" (c)
+178         :"ir" (i), "m" (v->counter) : "memory");
+179     return c;
+180 }
+}}}
+
+
+ * atomic_inc_and_test(atomic_t *v)
+ * atomic_dec_and_test(atomic_t *v)
+
+값을 1씩 증가/감소 시킨 후 결과 값이 0이면 1, 0이 아니면 0을 반환한다. SETE 어셈블리 명령어로 구현된다.
+
+
+ * atomic_add_return(int i, atomic_t *v)
+ * atomic_sub_return(int i, atomic_t *v)
+ * atomic_inc_return(atomic_t *v)
+ * atomic_dec_return(atomic_t *v)
+
+더하기/빼기를 하고 *v 결과 값을 반환한다. 구현 코드를 보면 xadd 어셈블리 명령어로 구현되어 있다. xadd 명령은 두 오퍼랜드의 값을 바꾸고, 덧셈의 결과를 결과 오퍼랜드에 저장하는 일을 한다. 코드를 보면 __i 값을 원래의 i 값으로 설정한 후 xadd 명령을 실행해서 i의 값과 카운터 값을 바꾸고 i 변수에 i + (*v) 값을 저장한다. 따라서 인라인 어셈블리가 실행된 후의 i 값은 i와 *v의 덧셈 값이므로 최종적으로 __i + i 값을 반환하게 된다.
+
+{{{
+182 /**
+183  * atomic_add_return - add and return
+184  * @i: integer value to add
+185  * @v: pointer of type atomic_t
+186  *
+187  * Atomically adds @i to @v and returns @i + @v
+188  */
+189 static __inline__ int atomic_add_return(int i, atomic_t *v)
+190 {
+191     int __i = i;
+192     __asm__ __volatile__(
+193         LOCK_PREFIX "xaddl %0, %1"
+194         :"+r" (i), "+m" (v->counter)
+195         : : "memory");
+196     return i + __i;
+197 }
+198
+199 static __inline__ int atomic_sub_return(int i, atomic_t *v)
+200 {
+201     return atomic_add_return(-i,v);
+202 }
+203
+204 #define atomic_inc_return(v)  (atomic_add_return(1,v))
+205 #define atomic_dec_return(v)  (atomic_sub_return(1,v))
+}}}
+
+
+
+ * set_bit 등의 비트 처리 매크로는 LOCK_PREFIX와 함께 bts 어셈블리 명령어를 사용함
+
+
+{{{
+ 33 /**
+ 34  * set_bit - Atomically set a bit in memory
+ 35  * @nr: the bit to set
+ 36  * @addr: the address to start counting from
+ 37  *
+ 38  * This function is atomic and may not be reordered.  See __set_bit()
+ 39  * if you do not require the atomic guarantees.
+ 40  * Note that @nr may be almost arbitrarily large; this function is not
+ 41  * restricted to acting on a single-word quantity.
+ 42  */
+ 43 static __inline__ void set_bit(size_t nr, volatile void * addr)
+ 44 {
+ 45     __asm__ __volatile__( LOCK_PREFIX
+ 46         "btsq %1,%0"
+ 47         :ADDR
+ 48         :"dIr" (nr) : "memory");
+ 49 }
+}}}
+
+
+
+'''참고 사항'''
+
+ * LOCK 접두어가 붙은 명령어는 메모리 장벽 역할을 한다. 프로세서 내부에서 LOCK 접두어를 만나면 메모리 처리 명령들이 모두 완료될때까지 기다리고 그 후에 다음 명령어를 실행하므로 메모리 장벽과 같은 역할을 한다. (시스템 메뉴얼 VOL 3A, 7.1)
+ * (펜티엄 계열에서) 워드 단위로 메모리에 값을 읽고/쓰는 명령어는 그 자체로 원자적이다.
+
+
+
+=== 최적화 장벽과 메모리 장벽 ===
+
+
+'''컴파일러는 최적화를 수행하므로 명령어의 순서가 소스 코드와 조금씩 다를 수 있다. 또한 프로세서는 Out-of-order 기법을 사용하고 여러개의 파이프라인을 가지므로 어셈블리 코드가 실행되는 순서 자체도 바뀔 수 있다.'''
+
+최적화 장벽과 메모리 장벽을 나누어서 이해해야 한다.
+
+ * 최적화 장벽: 컴파일러의 최적화 과정에 장벽을 만드는 것
+ * 메모리 장벽: 프로세서의 메모리 접근에 장벽을 만드는 것
+
+최적화 장벽은 장벽 이전의 코드들이 장벽 이후의 코드들과 섞이지 않도록 한다. 리눅스에서는 다음과 같이 인라인 어셈블리로 구현된 매크로로 정의된다. 
+
+{{{
+
+asm volatile("" ::: "memory")
+
+}}}
+
+"memory" 지시어는 컴파일러에게 지시어 이전의 코드들이 메모리의 값들을 변경했다고 생각하게 한다. 즉 메모리의 값이 모두 바꼈으므로 "memory" 지시어 이후에는 새롭게 메모리에서 값을 읽어오도록 하고, 지시어 이전에 읽은 값들(레지스터에 있는) 을 다시 사용하지 않는다. 
+
+주의할 것은 최적화 장벽은 프로세서의 메모리 장벽과는 완전히 별개이다. 최적화 장벽을 둔다고 해서 프로세서의 처리에도 장벽이 생긴다는 것은 아니다.
+
+
+메모리 장벽은 어셈블리 명령어의 수행이 CPU안에서 뒤섞이지 않도록 한다. CPU는 여러개의 파이프라인이 있으므로 명령에 따라 파이프라인안에서 실행되는 속도가 다를 수 있다. 또한 최신 CPU는 메모리 접근이나 브랜치 등의 여러가지 경우에 따라 어셈블리 명령어의 순서대로 실행되지 않고 좀더 빠르게 실행되도록 하는 Out-Of-Order라는 기능을 가지고 있다. 따라서 반드시 어셈블리 코드가 원래 소스의 순서대로 실행된다고 볼 수 없고, 이것을 원래의 순서대로 직렬화 (serialize)하는 방법이 필요하다.
+
+다음 어셈블리 명령어는 메모리 장벽의 역할을 한다.
+
+ * 입출력 포트에 동작하는 명령어
+ * LOCK 접두어가 붙은 명령어 (원자적 연산을 위해 만든 매크로도 해당됨)
+  * 따라서 모든 동기화 관련 기본 기법 들 (atomic, 스핀락 등)은 메모리 장벽 역할을 한다.
+ * 제어 레지스터, 시스템 레지스터, 디버그 레지스터에 쓰기를 하는 명령어 (sti, cli 등)
+ * 펜티엄 4 이상에서 구현된 메모리 장벽 명령어, lfence, mfence, sfence
+ * 그 외 몇개의 특수 명렁어, iret 등
+
+
+
+리눅스에서 구현된 메모리 장벽 (i386과 x86_64에서 다르게 구현됨)
+
+ * smp_mb(): 읽기+쓰기 메모리 장벽
+ * smp_rmb(): 읽기용 메모리 장벽
+ * smp_wmb(): 쓰기용 메모리 장벽
+
+
+{{{
+388 #define smp_mb()    mb()
+390 # define smp_rmb()  rmb()
+395 # define smp_wmb()  wmb()
+
+......
+
+328 #define mb()    asm volatile("mfence":::"memory")
+329 #define rmb()   asm volatile("lfence":::"memory")
+330 #define wmb()   asm volatile("sfence" ::: "memory")
+}}}
+== CaOS64 구현 ==
+
+ * per-cpu 배열: percpu.c
+
+ * spinlock: spinlock.c
+
+ * atomic operations: include/atomic.h
+
+ * bit operations: include/bitops.h
+
+
+== 참고 자료 ==
+
+ * http://kerneltrap.org/node/4705 : likely, unlikely의 개념
+ * http://lwn.net/Articles/180101/ : robust per_cpu allocation for modules
+ * http://kldp.org/node/84286 메모리베리어 참고자료
+ * http://minjang.egloos.com/2274079
+ * http://monac.egloos.com/2185756
+ * http://www.kernel.org/pub/linux/kernel/people/rusty/kernel-locking/index.htm
+ * [wiki:gurugio/barrier_test 최적화 장벽 이해 실험]
+
+
+
+
+
+

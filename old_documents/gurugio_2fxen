@@ -1,0 +1,851 @@
+'''Xen-3.1.0 코드를 분석하는 스터디 후 복습''' (http://iamroot.org)
+
+[[TableOfContents]]
+
+
+= 2008.3.29 map_page_to_xen 분석 = 
+
+{{{#!vim c
+
+int map_pages_to_xen(
+    unsigned long virt,     /* 맵핑할 메모리의 시작 주소의 가상 번지 */
+    unsigned long mfn,      /* 메모리의 페이지 번호 */
+    unsigned long nr_mfns,  /* 메모리의 페이지 갯수 */
+    unsigned long flags)    /* 속성 플래그 */
+{
+    l2_pgentry_t *pl2e, ol2e;   /* L2페이지 엔트리, 64비트 정수 */
+    l1_pgentry_t *pl1e, ol1e;   /* L1 페이지 엔트리, 64비트 정수 */
+    unsigned int  i;
+
+    unsigned int  map_small_pages = !!(flags & MAP_SMALL_PAGES); /* 4K페이지 속성을 가지고 있나? */
+    /* 일단 4K 페이지 플래그는 지워놓는다. map_small_pages에 저장해 좋았으니까 */
+    flags &= ~MAP_SMALL_PAGES;  
+
+
+    /* 페이지 갯수만큼 반복 */
+    while ( nr_mfns != 0 )
+    {
+        /*
+         * L2 페이지 테이블의 시작 주소, 가상 주소인가?
+         * 이 참수는 L2 페이지 테이블의 시작 주소를 반환하기 위해서
+         * L4,L3 테이블을 순환하는데 만약 페이지 테이블이 아직 생성되지 않은
+         * 가상 주소라면 새롭게 페이지 테이블을 만들기도 한다.
+         *
+         * head.S에서 0~16MB에 대한 페이지 테이블을 모두 만들었으므로
+         * 그 외에 16MB 이후 영역의 물리 메모리에 대한 페이지 테이블을 설정한다.
+         */
+        pl2e = virt_to_xen_l2e(virt);
+
+        /* PAGE_SHIFT = 12, PAGETABLE_ORDER = 9 */
+
+        /* 1. 페이지의 번호가 512의 배수, 즉 시작 주소가 2MB의 배수임 
+         * 2. 페이지의 갯수가 512개가 넘음
+         * 3. 4K 페이지 속성 플래그가 없음
+         * 이런 경우에는 2MB 페이지 프레임으로 정렬될 수 있는 조건에 만족한다.
+         * 시작 주소가 2MB 로 align되고 맵핑되는 메모리 크기도 512개 페이지 (4K*512=2M)를
+         * 넘으므로 2MB 페이지 프레임 단위로 맵핑할 수 있다.
+         *
+         * 즉 512개씩 2MB 단위로 페이지들을 맵핑하다가 512개 이하로 페이지가 남으면
+         * 아래 if 문에서 1페이지씩 따로 맵핑하게 된다
+         */
+        if ( ((((virt>>PAGE_SHIFT) | mfn) & ((1<<PAGETABLE_ORDER)-1)) == 0) && 
+             (nr_mfns >= (1<<PAGETABLE_ORDER)) &&   /* 페이지 갯수가 512개가 넘음 */
+             !map_small_pages )         /* 4K 페이지로 지정되지 않음 */
+        {
+            /* Super-page mapping. */
+
+            /* ol2e에는 새롭게 값을 쓰기 이전의 페이지 테이블 엔트리의 값이 저장된다. */
+            ol2e = *pl2e;
+
+            /* 
+             * _PAGE_PSE = 0x80 페이지 테이블 엔트리의 8번 비트를 1로 셋팅한다.
+             * 즉 PSE 비트를 1로 만들어서 2MB 페이지 프레임으로 사용한다
+             */
+            l2e_write_atomic(pl2e, l2e_from_pfn(mfn, flags|_PAGE_PSE));
+
+            /* 만약 이전에 쓰여있던 엔트리의 값이 유효한 값이었으면 */
+            if ( (l2e_get_flags(ol2e) & _PAGE_PRESENT) )
+            {
+                local_flush_tlb_pge();  /* TLB를 새롭게 바꿈 */
+                /* G 비트 (8번) 가 0이었으면 
+                 * 이전에 생성된 페이지 테이블들은 제거한다.
+                 *
+                 * =================================================================
+                 * 여기서 _PAGE_PSE 비트가 무엇을 의미하는데 페이지 테이블을 지우는데
+                 * 확인을 먼저 해야하는거지?
+                 * ==================================================================
+                 */
+                if ( !(l2e_get_flags(ol2e) & _PAGE_PSE) )
+                    free_xen_pagetable(mfn_to_virt(l2e_get_pfn(ol2e)));
+            }
+
+            /*
+             * 다음 페이지들을 설정한다.
+             * L2페이지 테이블은 하나의 엔트리에 2MB (512개 4K 페이지)의 메모리를
+             * 맵핑할 수 있으므로 한번 루프를 돌때마다 2MB씩 영역의 페이지 테이블을 생성하게 된다.
+             */
+            virt    += 1UL << L2_PAGETABLE_SHIFT;
+            mfn     += 1UL << PAGETABLE_ORDER;
+            nr_mfns -= 1UL << PAGETABLE_ORDER;
+        }
+
+        /* 512개씩 2MB 크기로 페이지 테이블을 맵핑하다가
+         * 512 이하 갯수의 페이지 프레임들이 남았으면
+         * 여기서 4K 페이지 하나씩 따로 페이지 테이블을 생성하게 된다.
+         * 아래 페이지 갯수를 새롭게 카운트하는 것을 보면
+         * 1씩 빼는 것을 알 수 있다.
+         */
+        else
+        {
+            /* Normal page mapping. */
+            if ( !(l2e_get_flags(*pl2e) & _PAGE_PRESENT) )
+            {
+                pl1e = alloc_xen_pagetable();
+                clear_page(pl1e);
+                l2e_write(pl2e, l2e_from_pfn(virt_to_mfn(pl1e),
+                                             __PAGE_HYPERVISOR));
+            }
+            else if ( l2e_get_flags(*pl2e) & _PAGE_PSE )
+            {
+                pl1e = alloc_xen_pagetable();
+                for ( i = 0; i < L1_PAGETABLE_ENTRIES; i++ )
+                    l1e_write(&pl1e[i],
+                              l1e_from_pfn(l2e_get_pfn(*pl2e) + i,
+                                           l2e_get_flags(*pl2e) & ~_PAGE_PSE));
+                l2e_write_atomic(pl2e, l2e_from_pfn(virt_to_mfn(pl1e),
+                                                    __PAGE_HYPERVISOR));
+                local_flush_tlb_pge();
+            }
+
+            pl1e  = l2e_to_l1e(*pl2e) + l1_table_offset(virt);
+            ol1e  = *pl1e;
+            l1e_write_atomic(pl1e, l1e_from_pfn(mfn, flags));
+            if ( (l1e_get_flags(ol1e) & _PAGE_PRESENT) )
+                local_flush_tlb_one(virt);
+
+            virt    += 1UL << L1_PAGETABLE_SHIFT;
+            mfn     += 1UL;
+            nr_mfns -= 1UL;
+        }
+    }
+
+    return 0;
+}
+
+
+}}}
+
+
+
+= 2008.3.5 Xen head.s 분석 후 메모리 맵 그림 =
+
+ * http://asmlove.co.kr/zBdC7/download.php?id=281
+
+
+= 2008.3.04 혼자 복습한거 =
+
+ * xen/arch/x86/x86_64/mm.c에 정의된 페이지 테이블
+  * L4_PAGETABLE_ENTRIES, L3_PAGETABLE_ENTRIES, L2_PAGETABLE_ENTRIES 은 모두 512
+  * L4 테이블 idle_pg_table 1개 정의됨
+  * L3 테이블 l3_identmap 1개 정의됨
+  * L2 테이블 l2_identmap은 4개 정의됨 -> L4*L2_PAGETABLE_ENTRIES = 512 * 4개 테이블 -> 연속된 4KB 페이지 프레임 4개에 저장된다.
+  * xen 코드/데이터가 맵핑되는 l2_xenmap과 l3_xenmap은 각각 1개씩 정의됨
+  * 페이지 테이블은 모두 .bss 섹션에 저장됨
+
+{{{#!vim c
+/* Top-level master (and idle-domain) page directory. */
+l4_pgentry_t __attribute__ ((__section__ (".bss.page_aligned")))
+    idle_pg_table[L4_PAGETABLE_ENTRIES];
+
+/* Enough page directories to map bottom 4GB of the memory map. */
+l3_pgentry_t __attribute__ ((__section__ (".bss.page_aligned")))
+    l3_identmap[L3_PAGETABLE_ENTRIES];
+l2_pgentry_t __attribute__ ((__section__ (".bss.page_aligned")))
+    l2_identmap[4*L2_PAGETABLE_ENTRIES];
+
+/* Enough page directories to map the Xen text and static data. */
+l3_pgentry_t __attribute__ ((__section__ (".bss.page_aligned")))
+    l3_xenmap[L3_PAGETABLE_ENTRIES];
+l2_pgentry_t __attribute__ ((__section__ (".bss.page_aligned")))
+    l2_xenmap[L2_PAGETABLE_ENTRIES];
+}}}
+
+
+ * head.S에서 GDT 테이블 만들기
+  * 32비트나 64비트나 세그먼트 디스크립터는 동일한 모양을 가진다.
+  * CaOS의 GDT
+{{{#!vim c
+gdt:
+	dd 0x00000000, 0x00000000
+	dd 0x0000FFFF, 0x00CF9A00 ; kernel code segment
+	dd 0x0000FFFF, 0x00CF9200 ; kernel data segment
+	dd 0x8000FFFF, 0x0040920B ; video memory segment
+
+
+	;dd 0x00000000, 0x00000000	; for TSS descriptor
+descriptor4:
+	dw 104
+	dw 0
+	db 0
+	db 0x89
+	db 0
+	db 0
+
+	dd 0x0000FFFF, 0x00cfFA00  ; user code segment
+	dd 0x0000FFFF, 0x00cfF200  ; user data segment
+	dd 0x00000000, 0x0000000
+}}}
+
+  * Xen-en의 GDT (초기화단계)
+   * ring 0 code, 32bit : base=0x0, limit=0xfffff, G=1, D/B=1, L=0, AVL=0, P=1, DPL=0, S=1, type=0xa (excutable/read 타입)
+   * ring 0 code, 64bit : base=0x0, limit=0xfffff, G=0, D/B=0, L=1, AVL=0, P=1, DPL=0, S=1, type=0xa (L=1이므로 64비트 코드가 실행되는 세그먼트임을 나타낸다)
+   * ring 0 data        : base=0x0, limit=0xfffff, G=0, D/B=1, L=0, AVL=0, P=1, DPL=0, S=1, type=0x2 (readd/write 타입)
+{{{
+trampoline_gdt:
+	.quad 0x0000000000000000 => unused
+	.quad 0x00cf9a000000ffff => ring 0 code, 32bit
+	.quad 0x00af9a000000ffff => ring 0 code, 64bit
+	.quad 0x00cf92000000ffff => ring 0 data
+	.quad 0x00009a090000ffff => real-mode code
+	.quad 0x000092090000ffff => real-mode data
+
+}}}
+
+ * head.S에서 페이지 테이블 설정 코드 분석 결과 (''부팅 추기 단계의 설정임'')
+  * 페이지 테이블 순서 : idle_pg_table -> l3_identmap/l3_xenmap -> l2_identmap/l2_xenmap
+  * idle_pg_table은 L4 테이블이고 두개의 L3 테이블과 두개의 L2 테이블로 설정한다.
+  * 64비트 모드에서 하나의 페이지 테이블 엔트리는 8바이트이고, 하나의 페이지 테이블은 512개의 엔트리를 가진다. 
+  * L2 페이지 테이블 한개는 512*2M=1G의 메모리를 맵핑할 수 있고, L3 페이지 테이블 한개는 512G의 메모리를 맵핑할 수 있다.
+  * head.S 에서는 초기 16MB만 설정하도록 l2_identmap의 0~7번 엔트리만 설정한다.
+  * l3_identmap[0] 에 l2_identmap의 주소가 저장됨
+  * L4 페이지 테이블에 해당하는 idle_pg_table[0]에 l3_identmap의 주소가 저장되므로 결국 물리 메모리의 초기 0~16MB가 가상 메모리 0~16MB에 동일하게 맵핑된다.
+  * idle_pg_table[262]에도 동일하게 l3_identmap의 주소가 저장되므로 가상 메모리 0xFFFF830000000000 (__PAGE_OFFSET) 이 물리 메모리 0~16MB를 맵핑하게 된다.
+  * l2_xenmap의 0~7번 엔트리에도 l2_identmap과 동일하게 물리 메모리 0~16MB 영역이 맵핑된다.
+  * l3_xenmap[50] 에 l2_xenmap의 주소가 저장됨 -> 왜?
+  * idle_pg_table[261]에 l3_xenmap의 주소가 저장됨 -> 결국 xen이 저장된 곳의 가상 메모리는 0xFFFF828C80000000 가 된다. (xen/include/asm-x86/x86_64/page.h 에 선언됨)
+
+{{{#!vim c
+#include <xen/config.h>
+#include <xen/multiboot.h>
+#include <public/xen.h>
+#include <asm/asm_defns.h>
+#include <asm/desc.h>
+#include <asm/page.h>
+#include <asm/msr.h>
+
+        .text
+        .code32
+
+#undef bootsym_phys
+#define sym_phys(sym)     ((sym) - __XEN_VIRT_START)
+#define bootsym_phys(sym) ((sym) - trampoline_start + BOOT_TRAMPOLINE)
+
+#define BOOT_CS32        0x0008
+#define BOOT_CS64        0x0010
+#define BOOT_DS          0x0018
+#define BOOT_PSEUDORM_CS 0x0020
+#define BOOT_PSEUDORM_DS 0x0028
+
+/* 여기서 시작 */
+ENTRY(start)
+        jmp     __start
+
+        .align 4
+/*** MULTIBOOT HEADER ****/
+#define MULTIBOOT_HEADER_FLAGS (MULTIBOOT_HEADER_MODS_ALIGNED | \
+                                MULTIBOOT_HEADER_WANT_MEMORY)
+        /* Magic number indicating a Multiboot header. */
+        .long   MULTIBOOT_HEADER_MAGIC
+        /* Flags to bootloader (see Multiboot spec). */
+        .long   MULTIBOOT_HEADER_FLAGS
+        /* Checksum: must be the negated sum of the first two fields. */
+        .long   -(MULTIBOOT_HEADER_MAGIC + MULTIBOOT_HEADER_FLAGS)
+
+        .section .init.text
+
+.Lbad_cpu_msg: .asciz "ERR: Not a 64-bit CPU!"
+.Lbad_ldr_msg: .asciz "ERR: Not a Multiboot bootloader!"
+
+bad_cpu:
+        mov     $(sym_phys(.Lbad_cpu_msg)),%esi # Error message
+        jmp     print_err
+not_multiboot:
+        mov     $(sym_phys(.Lbad_ldr_msg)),%esi # Error message
+print_err:
+        mov     $0xB8000,%edi  # VGA framebuffer
+1:      mov     (%esi),%bl
+        test    %bl,%bl        # Terminate on '\0' sentinel
+2:      je      2b
+        mov     $0x3f8+5,%dx   # UART Line Status Register
+3:      in      %dx,%al
+        test    $0x20,%al      # Test THR Empty flag
+        je      3b
+        mov     $0x3f8+0,%dx   # UART Transmit Holding Register
+        mov     %bl,%al
+        out     %al,%dx        # Send a character over the serial line
+        movsb                  # Write a character to the VGA framebuffer
+        mov     $7,%al
+        stosb                  # Write an attribute to the VGA framebuffer
+        jmp     1b
+
+gdt_boot_descr:
+        .word   6*8-1
+        /* 
+         * #define sym_phys(sym) ((sym) - __XEN_VIRT_START)
+         * #define __XEN_VIRT_START (0xFFFF828C80000000) // 64bit
+         * #define __XEN_VIRT_START (0xFF000000) // 32bit
+         *
+         * trampoline_gdt:
+         * .quad   0x0000000000000000 /* 0x0000: unused */
+         * .quad   0x00cf9a000000ffff /* 0x0008: ring 0 code, 32-bit mode */
+         * .quad   0x00af9a000000ffff /* 0x0010: ring 0 code, 64-bit mode */
+         * .quad   0x00cf92000000ffff /* 0x0018: ring 0 data */
+         * .quad   0x00009a090000ffff /* 0x0020: real-mode code @ 0x90000 */
+         * .quad   0x000092090000ffff /* 0x0028: real-mode data @ 0x90000 */
+         */
+        .long   sym_phys(trampoline_gdt)
+
+__start:
+        /* direction flag clear(증가) */
+        cld
+        /* 인터럽트 disable */
+        cli
+
+        /* Initialise GDT and basic data segments. */
+        /* 
+         * GDTR에 gdt_boot_descr(임시 GDT)를 설정
+         * 32bit, 64bit 모두 같은 GDT를 사용
+         */
+        lgdt    %cs:sym_phys(gdt_boot_descr)
+
+        /*
+         * BOOT_DS = 0x0018 = 000 11(index = 3) 0(TI) 00(CPL)
+         */
+        mov     $BOOT_DS,%ecx
+        mov     %ecx,%ds
+        mov     %ecx,%es
+        mov     %ecx,%ss
+
+        /* Check for Multiboot bootloader */
+        /*
+         * lilo나 grub와 같은 Multiboot bootloader로 load하였다면
+         * eax에 0x2 BAD B002(=boot) 값이 들어있음
+         */
+        cmp     $0x2BADB002,%eax
+        jne     not_multiboot
+
+        /* Save the Multiboot info structure for later use. */
+        /*
+         * ebx에 있는 multiboot 정보 구조체 주소를 multiboot_ptr에 저장
+         * ebx의 값은 bootloader에서 넣어준 값임
+         */
+        mov     %ebx,sym_phys(multiboot_ptr)
+
+
+        /* Initialize BSS (no nasty surprises!) */
+        /*
+         * BSS 초기화
+         */
+        mov     $sym_phys(__bss_start),%edi
+        mov     $sym_phys(_end),%ecx
+        sub     %edi,%ecx
+        xor     %eax,%eax
+        rep     stosb
+
+        /* Interrogate CPU extended features via CPUID. */
+        mov     $0x80000000,%eax
+        /* 
+         * eax에 0x80000000넣고 cpuid를 수행하면
+         * 64bit를 지원하는 CPU이면 eax의 값이 증가하게 됨
+         * 정확하게 리턴 되는 값은 메뉴얼을 보아야함 (누가 적어주길)
+         */
+        cpuid
+
+        /* ebx = 0 */
+        xor     %edx,%edx
+
+        /* 
+         * eax의 값이 작거나 같으면 
+         * "ERR: Not a 64-bit CPU!"를 출력후 부팅 중지
+         */
+        cmp     $0x80000000,%eax    # any function > 0x80000000?
+        jbe     1f
+
+        /*
+         * eax에 0x80000001을 넣고 cpuid를 호출하면
+         * long mode를 지원하는 CPU라면 edx의 29번 bit가 0이됨
+         */
+        mov     $0x80000001,%eax
+        cpuid
+1:      mov     %edx,sym_phys(cpuid_ext_features)
+
+#if defined(__x86_64__)
+        /* Check for availability of long mode. */
+        bt      $29,%edx
+        jnc     bad_cpu
+        /* Initialise L2 identity-map and xen page table entries (16MB). */
+	/********************************************************* 
+	l2_identmap은 전체 메모리 맵에서 초기 영역 4GB를 맵핑하는 
+	페이지 디렉토리이다. 
+	결국 물리 메모리 0~4G를 가상 메모리 0~4G로 동일하게 맵핑하는
+	역할을 한다.
+						
+						
+	l2_identmap[4*L2_PAGETABLE_ENTRIES];으로 정의된다.
+	64비트 int 정수를 512*4개 연결한 테이블이다.
+	결국 4개의 페이지 프레임에 4개의 페이지 디렉토리를 만든다.
+	64비트 모드로 진입하면 
+	하나의 페이지 프레임이 2MB의 크기이고
+	하나의 페이지 디렉토리에 512개의 엔트리가 있으므로
+	하나의 페이지 디렉토리가 2MB*512=1GB의 메모리를 맵핑하고
+	4개의 페이지 디렉토리가 4GB의 메모리를 맵핑한다.
+	**************************************************************/
+        mov     $sym_phys(l2_identmap),%edi /* edi=identmap주소 */
+	/*
+	l2_xenmap은 xen/arch/x86/x86_64/mm.c 에 정의되어 있고
+	xen의 코드와 데이터 메모리를 맵핑하는 페이지 디렉토리이다.
+
+	!! l2_xenmap을 따로 구별해서 사용하는 이유를 모르겠음 !!
+	*/
+        mov     $sym_phys(l2_xenmap),%esi		/* esi=xenmap 주소 */
+	/* 
+	0x1e3은 페이지 디렉토리 엔트리의 속성을 나타낸다.
+	P=1,R/W=1,U/S=0, PWT=0, PCD=0, A=1, D=1, G=1, Avail=0,PAT=0
+	*/
+        mov     $0x1e3,%eax                  /* PRESENT+RW+A+D+2MB+GLOBAL */
+	/*
+	8개의 페이지 디렉토리 엔트리를 설정한다. 
+	-> 2MB*8 = 16MB 초기화 부분에서는 16MB만 맵핑함
+	-> 추후 C 코드에서 나머지를 매핑할 것으로 예상됨
+
+	l2_identmap과 l2_xenmap의 초기 8개 엔트리에
+	동일한 값이 저장된다.
+	즉 l2_identmap과 l2_xenmap 둘다 물리 메모리 0~16M 영역을
+	동시에 맵핑하고 있게 된다.
+	*/
+        mov     $8,%ecx	
+1:      mov     %eax,(%edi)
+	/* 
+	하나의 엔트리의 크기가 8바이트이므로
+	다음 엔트리에 접근하기 위해서는 8을 더해야 한다
+	*/
+        add     $8,%edi			
+        mov     %eax,(%esi)
+        add     $8,%esi
+	/*
+	64비트모드에서는 2MB 페이지를 사용하므로
+	L2 페이지 테이블 엔트리에 저장되는 페이지 프레임의 주소는
+	1<<21=2MB 단위로 증가되어야 한다.
+	*/
+        add     $(1<<L2_PAGETABLE_SHIFT),%eax
+        loop    1b
+
+
+
+
+    	/* Initialise L3 identity-map page directory entries. */
+	/* 
+	l2_identmap 페이지 테이블이 매핑된 L3 테이블 l3_identmap을 
+	설정한다. 
+	*/
+        mov     $sym_phys(l3_identmap),%edi
+	/*
+	7은 L3 테이블 엔트리의 속성을 나타낸다.
+	P=1, R/W=1, U/S=1
+	4개의 엔트리를 설정하는데 각각
+	l2_identmap이 저장된 페이지프레임의 주소부터 4개의 페이지 프레임의
+	물리 주소가 저장된다.
+	현재는 64비트 롱모드가 아니기 때문에 
+	페이지의 크기는 4K이다. PAGE_SIZE -> 1<<12
+	*/
+        mov     $(sym_phys(l2_identmap)+7),%eax
+        mov     $4,%ecx			/* 4개(4GB)의 엔트리만 설정함 */
+1:      mov     %eax,(%edi)
+        add     $8,%edi
+        add     $PAGE_SIZE,%eax		/* 하나의 L2 테이블은 4KB 페이지 프레임에 저장됨 */
+        loop    1b
+
+
+
+        /* Initialise L3 xen-map page directory entry. */
+	/*
+	l3_identmap 테이블을 설정한 것과 같이
+	l2_xenmap 테이블의 주소가 저장되는 l3_xenmap 테이블을 설정한다.
+	*/
+        mov     $(sym_phys(l2_xenmap)+7),%eax
+
+	/****************************************
+	50번 엔트리에 맵핑한다.
+	*****************************************/
+        mov     %eax,sym_phys(l3_xenmap) + (50*8)
+
+
+
+
+
+        /* Hook indentity-map and xen-map L3 tables into PML4. */
+	/*
+	idle_pg_table은 xen이 사용할 L4 최상위 테이블의 이름이다.
+		
+	l3_identmap 테이블의 주소를 idle_pg_table의 0번 엔트리와 
+	262번 엔트리에 저장한다.
+	l3_identmap 테이블은 물리메모리 0~4GB의 영역을 맵핑하고 있고
+	이것을 L4 테이블의 0번에 저장하므로 가상 메모리 0~4G와 
+	물리 메모리 0~4G를 동일하게 맵핑한다는 의미이다.
+
+	그리고 L4 테이블 262번 엔트리는 가상 메모리 0xffff830000000000 에 해당하는데
+	이것이 L4 테이블 0번 엔트리와 동일하게 설정되므로
+	물리 메모리 0~4G 영역이 가상 메모리 0xFFFF830000000000 에도 그대로 매핑된다는
+	것을 의미한다.
+
+	/*
+        mov     $(sym_phys(l3_identmap)+7),%eax
+        mov     %eax,sym_phys(idle_pg_table) + (  0*8) /* PML4[  0]: 1:1 map */
+        mov     %eax,sym_phys(idle_pg_table) + (262*8) /* PML4[262]: 1:1 map */
+
+	/*
+	xen의 코드와 데이터는 261번 엔트리에 맵핑한다.
+	xen의 링커 스크립트 xen/arch/x86/x86_64/xen.lds.S를
+	확인해보면 
+	#define __XEN_VIRT_START        (0xFFFF828C80000000)
+	_start=__XEN_VIRT_START+0x100000
+	라고 써있는데 가상 메모리의 시작은 이 값이지만
+	물리 메모리의 시작은????
+	*/
+        mov     $(sym_phys(l3_xenmap)+7),%eax
+        mov     %eax,sym_phys(idle_pg_table) + (261*8) /* PML4[261]: xen map */
+#elif defined(CONFIG_X86_PAE)
+        /* Initialize low and high mappings of memory with 2MB pages */
+        mov     $sym_phys(idle_pg_table_l2),%edi
+        mov     $0xe3,%eax                   /* PRESENT+RW+A+D+2MB */
+1:      mov     %eax,__PAGE_OFFSET>>18(%edi) /* high mapping */
+        stosl                                /* low mapping */
+        add     $4,%edi
+        add     $(1<<L2_PAGETABLE_SHIFT),%eax
+        cmp     $DIRECTMAP_PHYS_END+0xe3,%eax
+        jne     1b
+1:      stosl   /* low mappings cover up to 16MB */
+        add     $4,%edi
+        add     $(1<<L2_PAGETABLE_SHIFT),%eax
+        cmp     $(16<<20)+0xe3,%eax
+        jne     1b
+#else
+        /* Initialize low and high mappings of memory with 4MB pages */
+        mov     $sym_phys(idle_pg_table),%edi
+        mov     $0xe3,%eax                   /* PRESENT+RW+A+D+4MB */
+1:      mov     %eax,__PAGE_OFFSET>>20(%edi) /* high mapping */
+        stosl                                /* low mapping */
+        add     $(1<<L2_PAGETABLE_SHIFT),%eax
+        cmp     $DIRECTMAP_PHYS_END+0xe3,%eax
+        jne     1b
+1:      stosl   /* low mappings cover up to 16MB */
+        add     $(1<<L2_PAGETABLE_SHIFT),%eax
+        cmp     $(16<<20)+0xe3,%eax
+        jne     1b
+#endif
+
+        /* Copy bootstrap trampoline to low memory, below 1MB. */
+        mov     $sym_phys(trampoline_start),%esi
+        mov     $bootsym_phys(trampoline_start),%edi
+        mov     $trampoline_end - trampoline_start,%ecx
+        rep     movsb
+
+        mov     $0x98000,%esp
+        call    cmdline_parse_early
+
+        /* Jump into the relocated trampoline. */
+	/*
+	trampoline.S 코드에서는 16비트 real모드로 잠시 변환했다가
+	32비트->64비트 순으로 변환하면서 64비트 롱 모드로 완전히
+	전환한다.
+	head.S에서 설정한 세그먼트와 페이지 테이블을 그대로 사용해서
+	MSR 레지스터 등 프로세서 초기화에 필요한 레지스터들을
+	설정해준다.
+	그리고 trampoline.S의 마지막에서 __high_start로 점프한다.	
+	__high_start도 아래에 head.S 파일에 삽입되어있다.
+	*/
+        jmp     $BOOT_CS32,$bootsym_phys(trampoline_boot_cpu_entry)
+
+#include "cmdline.S"
+
+        .globl trampoline_start, trampoline_end
+trampoline_start:
+#include "trampoline.S"
+trampoline_end:
+
+        .text
+__high_start:
+#ifdef __x86_64__
+#include "x86_64.S"
+#else
+#include "x86_32.S"
+#endif
+
+
+
+}}}
+
+
+= 2008.2.23 =
+
+1. 모듈이 뭔가?
+ * 모듈의 개념 : 부팅 후 부트로더가 Dom0로 사용할 커널을 로드한다. 이것을 모듈로 로드한다.
+ * 부트로더가 Xen을 실행할 때 xen.gz이라는 하이퍼바이저 이미지를 실행하고, Xen이 부트로더에서 모듈로 읽어진 커널 정보를 부트로더에서 넘겨받아서 Dom0로 실행하는 절차가 이루어짐 -> 2/16,23 분석하고 있음 -> 계속 조사해서 부팅 절차를 이해 필요
+
+2. gcc에서 매크로 함수를 만들 때 ## 라고 쓰는데 이것이 무엇인가?
+
+3. IP 레지스터는 64비트인데 물리 주소는 그보다 적은 비트수를 가진다. 그러면 남은 자리에는 어떤 값이 들어갈까?
+ * 가상 주소에 대한 AMD64 매뉴얼의 설명
+  * (AMD64 매뉴얼 2페이지) Long mode defines a 64-bit effective-address length. If a processor implementation does not support the full 64-bit virtual-address space, the effective address must be in canonical form (see “Canonical Address Form” on page 4).
+  * When the flat-memory model is used—as in 64-bit mode—a segment-base address is treated as 0. In this case, the linear address is identical to the effective address. In long mode, linear addresses must be in canonical address form, as described in “Canonical Address Form” on page 4.
+  * Although some processor implementations do not use all 64 bits of the virtual address, they all check bits 63 through the most-significant implemented bit to see if those bits are all zeros or all ones. An address that complies with this property is in canonical address form. In most cases, a virtual-memory reference that is not in canonical form causes a general-protection exception (#GP) to occur.
+  * 결국 최대 64비트까지 사용할 수는 있지만 프로세서 모델에 따라 다르게 사용할 수 있다는 의미이다. 실제로 AMD64머신에 리눅스를 설치해보면 48비트의 가상 주소를 사용하는 것을 볼 수 있다.
+  * 48비트의 가상 주소를 사용할 때 49번 비트부터 63번 비트까지는 가상 주소의 MSB와 동일한 비트 값을 채우게 된다. 만약 48비트 주소 값이 0xFFFF FFFF FFFF 이면 48번 비트가 1이므로 64비트 주소 값은 0xFFFF FFFF FFFF FFFF가 되는 것이다. 반대로 48비트 주소 값 0x7FFF FFFF FFFF는 0x0000 7FFF FFFF FFFF 가 된다.
+ * 물리 주소에 대한 AMD64 매뉴얼의 설명
+  * Long Mode—This mode is unique to the AMD64 architecture. This mode supports up to 4petabytes of physical-address space using 52-bit physical addresses. Long mode equires the use of page-translation and the physical-address size extensions (PAE).
+  * Physical-memory support is expanded to 52 address bits in long mode and legacy mode. This allows up to 4 petabytes of physical memory to be accessed. The expanded physical-memory support is achieved by using paging and the page-size extensions. Implementations can support fewer than 52 physical-address bits. The first implementation of the AMD64 architecture, for example, supports 40-bit physical addressing in both long mode and legacy mode.
+  * 52비트 이하 크기로 물리 메모리 주소를 사용할 수 있다. 역시 프로세서 모델에 따라 다르다.
+ * ''Long mode에서 PAE가 활성화 되었을 때 원칙적으로는 프로세서 모델에 따라서 가상 주소는 64비트까지, 물리 주소는 52비트까지 주소 지정이 가능하다.''
+ * '''하지만 AMD64 매뉴얼의 5장을 보면 Long Mode에서 4Kbyte 페이징을 할 때 48비트의 가상 주소를 사용하는 것으로 나와있다. 즉 현재까지의 프로세서는 사실상 48비트의 가상 주소를 사용한다. 그리고 물리 메모리는 36비트를 사용하고 있다. (앞으로 필요에 따라 더 커질 수 있도록 해논 것이다.) ''' 
+
+4. Xen-enterprise 3.2 소스에서 __start_xen 함수의 처음 단계에서 4KB 페이지를 사용하는가 아니면 2MB 페이지를 사용하는가?
+ * PAGE_SHIFT 값이 무엇인가?
+ * -en 소스에서는 페이징을 켜고 롱 모드로 넘어오기는 하지만 CR4.PAE와 PDE.PS 비트를 설정하는 코드를 찾지 못했다. '''-> 확실한가?'''
+ * 페이지 크기 설정 방법 (롱 모드는 PAE가 반드시 1이어야 함)
+  * CR4.PAE=1 && PDE.PS=0 => 4K page
+  * CR4.PAE=1 && PDE.PS=1 => 2M page
+  * CR4.PAE=0 && PDE.PS=0 => 4K page (Lagacy Mode)
+  * CR4.PAE=0 && PDE.PS=1 => 4M page (Lagacy Mode)
+
+5. L4 테이블 한개가 다룰 수 있는 메모리 범위는? (L4 테이블의 엔트리 1개가 처리하는 메모리 크기는?)
+ * 가상 메모리 전체 범위를 하나의 L4 페이지 테이블 (Page-Map Level-4:PML4) 가 처리하므로 2^48을 L4 테이블 엔트리의 갯수 512로 나눈 크기만큼 나누면, 결국 L4 테이블의 한 엔트리가 2^48 / 2^9 = 512GByte를 맵핑할 수 있다.
+
+6. L4 테이블에서 262번째 엔트리가 어떤 의미를 가지고 있나?
+ * L4 테이블 엔트리 1개가 512G 주소 범위를 맵핑하므로 262번째 엔트리의 메모리 맵 시작 주소는
+ * 512* 2^30 ^ 262 = '''0x8300 0000 0000 0000''' 가 된다.
+ * 이 숫자가 무엇을 의미할까?
+ * 백창우씨의 설명 : 
+{{{
+같은 상위 주소를 공유하기 위해서 입니다. 프로세스에게 있어서 System call을 
+사용해야 되기 때문에 항상 Kernel의 주소 공간을 가지고 있어야 합니다. 
+이때 각 프로세스 마다 서로 다른 Kernel의 주소 공간을 가지게 되면?? 
+
+사실 그렇게 서로 다른 Kernel의 주소 공간을 가지게 하기가 힘듭니다. 
+아니 프로세서가 지원하지 않으면 불가능하다고 하는게 더 맞을것 같습니다. 
+
+
+결국 각 프로세스마다 같은 Kernel의 주소 공간을 가지게는 해야 되는데 프로세스의 
+주소 공간을 분할하지 않고, 걸리적 거리지 않는 적합한 위치로 전통적으로 
+0xC0000000 위치를 사용하는 겁니다. 
+
+
+Xen 역시 마찬가지의 이유에서 0xFFFF830000000000을 __PAGE_OFFSET으로 사용하는거구요. 
+
+이렇게 물리 주소와 가상주소를 일치 시키는 이유는 주소에 따른 프로그래밍의 편의성과 
+빠른 주소 변환을 위해서 입니다.
+}}}
+
+7. 4KB 페이징과 2MB 페이징에서 각각 페이지 테이블이 몇 단계로 구성되는가?
+ * 4KB 페이징: 4개의 페이지 테이블 Page-Map Level-4(PML4), Page-Directory-Pointer, Page-Directory, Page-Table을 사용하고, Page-Table의 엔트리가 페이지 프레임의 주소를 가지고 있다.
+ * 2MB 페이징: 3개의 페이지 테이블 Page-Map Level-4(PML4), Page-Directory-Pointer, Page-Directory을 사용하고, Page-Directory의 엔트리가 페이지 프레임의 주소를 가지고 있다.
+
+= 2008.2.16 =
+
+1. mbi 구조체 : 멀티 부팅 부트로더에서 전달하는 정보
+ * 스펙이 정해져있음 : http://www.xtrj.org/china-ukernel/l4/multiboot-english.pdf
+ * grub과 같은 멀티 부트로더에서 만들어주는 데이터
+ * 자세한 사항은 추후에 꼭 필요하다고 판단되면 자세히 분석할 예정
+
+
+
+2. PAE를 켜면 주소 값의 범위가 어떻게 되나?
+ * http://en.wikipedia.org/wiki/Physical_Address_Extension
+ * x86에서는 32비트나 36비트 주소를 사용할 수 있고, x86-64에서는 52비트 주소를 사용할 수 있어서 64GB의 물리 메모리로 확장할 수 있다.
+ * The operating system uses page tables to map this 4 GiB address space onto the 64 GiB of total memory, and the map is usually different for each process.
+ * Enabling PAE (by setting bit 5, PAE, of the system register CR4) causes major changes to this scheme. By default, the size of each page remains as 4 KiB. Each entry in the page table and page directory is extended to 64 bits (8 bytes) rather than 32 bits to allow for additional address bits; however, the size of tables does not change, so both table and directory now have only 512 entries. Because this allows only half as many entries as the original scheme, an extra level of hierarchy has been added, so CR3 now points to the Page Directory Pointer Table, a short table which contains pointers to 4 page directories.
+ * The x86 architecture presently uses only 36 bits out of 52 bits possible. On x86-64 processors, PAE is obligatory in native long mode; presently 40 bits are used out of 52 bits possible.
+
+3. Superpage란 일반적인 용어인가?
+ * 4KB보드 큰 페이지 프레임을 사용할 때 이 페이지 프레임을 superpage라고 부르기도 함 (http://www.cs.binghamton.edu/~mlewis/cs552/slides/cs552-superpages.ppt)
+ * 여러개의 연속된 페이지 프레임을 묶어서 사용하는 경우에 이것을 superpage라고도 부름
+
+
+= 2008.1.26 =
+1. 64bit 환경의 콜링 컨벤션에서는 어떤 레지스터에 인자가 저장되나?
+ * http://www.agner.org/optimize/calling_conventions.pdf 의 14페이지 참고
+ * 윈도우와 리눅스가 서로 다름. 리눅스에서는 rdi에서부터 저장됨
+
+2. asmlinkage가 뭔가?
+ * http://kernelnewbies.org/FAQ/asmlinkage 참고
+ * This is a #define for some gcc magic that tells the compiler that the function should not expect to find any of its arguments in registers (a common optimization), but only on the CPU's stack.
+{{{#!vim c
+524 ENTRY(early_page_fault)
+525         SAVE_ALL
+526         movq  %rsp,%rdi
+527         call  do_early_page_fault
+528         jmp   restore_all_xen
+}}}
+ * do_early_page_fault는 asmlinkage로 선언된 함수인데 인자를 스택에 전달하지 않고 rdi 레지스터에 저장한다. 설명과 코드가 서로 다름... (왜?)
+ * xen/include/asm-x86/config.h 에는 asmlinkage가 아무 의미없는 선언문으로 정의되어 있다. 따라서 원래 리눅스 커널에서는 #define asmlinkage CPP_ASMLINKAGE __attribute__((regparm(0))) 이렇게 선언되므로 인자가 레지스터로 넘어오지만 xen에서는 그냥 아무 의미없이 사용하기도 한다. 32비트 xen에서는 리눅스 커널에서와 동일하게 사용한다.
+{{{#!vim c
+111 #if defined(__x86_64__)
+112 
+113 #define CONFIG_X86_64 1
+114 #define CONFIG_COMPAT 1
+115 
+116 #define asmlinkage
+117 
+118 #define XENHEAP_DEFAULT_MB (16)
+}}}
+
+3. EMT64란 무엇인가?
+ * http://en.wikipedia.org/wiki/X86-64 참고
+ * x86-64 is a 64-bit superset of the x86 instruction set architecture. The x86-64 instruction set natively supports Intel's x86 and was designed by Advanced Micro Devices (AMD), who have since renamed it AMD64. This architecture has been cloned by Intel under the name Intel 64 (formerly known as EM64T among other names).[1] This leads to the common use of the names x86-64 or x64 as more vendor-neutral terms to collectively refer to the two nearly identical implementations. x86-64 should not be confused with the Intel Itanium architecture, also known as IA-64, which is not compatible on the native instruction set level with the x86 or x86-64 architecture.
+
+4. C 언어에서 !! 연산자는 무엇인가?
+ * 위키 피디아 참고
+ * A "convert to Boolean" pseudo-operator in computer languages such as C, C++ and JavaScript 
+
+5. xen/common/kernel.c의 cmdline_parse 함수에서 __setup_start ~ __setup_end 영역에 접근한다. 이 영역은 무엇인가?
+ * xen/include/xen/init.h에 다음과 같이 선언되어있음 : __setup_start, __setup_end는 kernel_param 타입의 구조체임
+{{{#!vim c
+ 76 /*
+ 77  * Used for kernel command line parameter setup
+ 78  */
+ 79 struct kernel_param {
+ 80     const char *name;
+ 81     enum { OPT_STR, OPT_UINT, OPT_BOOL, OPT_CUSTOM } type;
+ 82     void *var;
+ 83     unsigned int len;
+ 84 };
+ 85
+ 86 extern struct kernel_param __setup_start, __setup_end;
+}}}
+ * xen/arch/x86/x86_64/xen.lds.S 링크 스크립트에 다음과 같이 정의되어 있음 : __setup_start와 __setup_end는 .init.setup 섹션의 시작과 끝을 나타낸다.
+{{{
+__setup_start = .;
+.init.setup : { *(.init.setup) } :text
+__setup_end = .;
+}}}
+ * xen/include/xen/init.h 파일에 다음과 선언됨
+{{{
+ 19 #define __initsetup  \
+ 20     __attribute_used__ __attribute__ ((__section__ (".init.setup")))
+}}}
+ * __initsetup 으로 선언된 데이터나 함수들은 .init.setup 섹션으로 정의된 메모리 영역에 모여서 저장된다.
+ * 따라서 &__setup_start라고 사용하면 .init.setup 영역의 시작 주소에 있는 kernel_param 타입의 구조체를 나타낸다.
+
+6. 가상 프로세서와 물리 프로세서를 관리하는 데이터 구조는?
+ * __start_xen 함수에 다음 코드가 있음 : 현재 초기화 과정을 0번 가상 프로세서에서 실행중이라고 나타내고 0번 가상 프로세서의 vcpu 구조체를 0xfffff000 메모리 번지에 저장함
+{{{
+320     set_current((struct vcpu *)0xfffff000); /* debug sanity */
+321     idle_vcpu[0] = current;
+322     set_processor_id(0); /* needed early, for smp_processor_id() */
+}}}
+ * 아직 전체적인 관리 구조를 이해할 정도로 분석이 되지 않음
+ * cpu_info는 물리적인 프로세서, vcpu는 가상 프로세서로 이해됨
+ * 하나의 cpu_info 안에 vcpu의 리스트가 있는 것으로 보아 물리 프로세서마다 여러개의 가상 프로세서를 두어서 여러가지 게스트 운영체제마다 가상 프로세서를 할당하는 것으로 생각됨.
+ * 현재 물리 프로세서에서 실행되는 가상 프로세서의 번호를 processor_id에 저장하고 레지스터 값들을 guest_cpu_user_regs에 저장하는 것으로 추정됨
+{{{#!vim c
+/xen_include/asm-x86/currnet.h
+ 15 struct vcpu;
+ 16
+ 17 struct cpu_info {
+ 18     struct cpu_user_regs guest_cpu_user_regs;
+ 19     unsigned int         processor_id;
+ 20     struct vcpu         *current_vcpu;
+ 21 };
+ 22
+ 23 static inline struct cpu_info *get_cpu_info(void)
+ 24 {
+ 25     struct cpu_info *cpu_info;
+ 26     __asm__ ( "and %%"__OP"sp,%0; or %2,%0"
+ 27               : "=r" (cpu_info)
+ 28               : "0" (~(STACK_SIZE-1)), "i" (STACK_SIZE-sizeof(struct cpu_info))
+ 29         );
+ 30     return cpu_info;
+ 31 }
+ 32
+ 33 #define get_current()         (get_cpu_info()->current_vcpu)
+ 34 #define set_current(vcpu)     (get_cpu_info()->current_vcpu = (vcpu))
+ 35 #define current               (get_current())
+ 36
+ 37 #define get_processor_id()    (get_cpu_info()->processor_id)
+ 38 #define set_processor_id(id)  (get_cpu_info()->processor_id = (id))
+ 39
+ 40 #define guest_cpu_user_regs() (&get_cpu_info()->guest_cpu_user_regs)
+
+/xen/include/xen/sched.h
+ 71 struct vcpu
+ 72 {
+ 73     int              vcpu_id;
+ 74
+ 75     int              processor;
+ 76
+ 77     vcpu_info_t     *vcpu_info;
+ 78
+ 79     struct domain   *domain;
+ 80
+ 81     struct vcpu     *next_in_list;
+ 82
+ 83     uint64_t         periodic_period;
+ 84     uint64_t         periodic_last_event;
+ 85     struct timer     periodic_timer;
+ 86     struct timer     singleshot_timer;
+ 87
+ 88     struct timer     poll_timer;    /* timeout for SCHEDOP_poll */
+ 89
+ 90     void            *sched_priv;    /* scheduler-specific data */
+ 91
+ 92     struct vcpu_runstate_info runstate;
+ 93 #ifndef CONFIG_COMPAT
+ 94 # define runstate_guest(v) ((v)->runstate_guest)
+ 95     XEN_GUEST_HANDLE(vcpu_runstate_info_t) runstate_guest; /* guest address */
+ 96 #else
+ 97 # define runstate_guest(v) ((v)->runstate_guest.native)
+ 98     union {
+ 99         XEN_GUEST_HANDLE(vcpu_runstate_info_t) native;
+100         XEN_GUEST_HANDLE(vcpu_runstate_info_compat_t) compat;
+101     } runstate_guest; /* guest address */
+102 #endif
+103
+104     /* Has the FPU been initialised? */
+105     bool_t           fpu_initialised;
+106     /* Has the FPU been used since it was last saved? */
+107     bool_t           fpu_dirtied;
+108     /* Is this VCPU polling any event channels (SCHEDOP_poll)? */
+109     bool_t           is_polling;
+110     /* Initialization completed for this VCPU? */
+111     bool_t           is_initialised;
+112     /* Currently running on a CPU? */
+113     bool_t           is_running;
+114     /* NMI callback pending for this VCPU? */
+115     bool_t           nmi_pending;
+116     /* Avoid NMI reentry by allowing NMIs to be masked for short periods. */
+117     bool_t           nmi_masked;
+118     /* Require shutdown to be deferred for some asynchronous operation? */
+119     bool_t           defer_shutdown;
+120     /* VCPU is paused following shutdown request (d->is_shutting_down)? */
+121     bool_t           paused_for_shutdown;
+122
+123     unsigned long    pause_flags;
+124     atomic_t         pause_count;
+125
+126     u16              virq_to_evtchn[NR_VIRQS];
+127
+128     /* Bitmask of CPUs on which this VCPU may run. */
+129     cpumask_t        cpu_affinity;
+130
+131     unsigned long    nmi_addr;      /* NMI callback address. */
+132
+133     /* Bitmask of CPUs which are holding onto this VCPU's state. */
+134     cpumask_t        vcpu_dirty_cpumask;
+135
+136     struct arch_vcpu arch;
+137 };
+}}}
+
+
+= 2008.1.19 =
+xen/arch/x86/boot/x86_64.S 파일 분석함
+
